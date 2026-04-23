@@ -2074,6 +2074,7 @@ class MainWindow(QMainWindow):
             ("Ctrl+N", self.new_session),
             ("Ctrl+Return", self.send_prompt),
             ("Ctrl+Enter", self.send_prompt),
+            ("Esc", self.stop_current_request),
         ]
         for sequence, handler in bindings:
             shortcut = QShortcut(QKeySequence(sequence), self)
@@ -2374,6 +2375,10 @@ class MainWindow(QMainWindow):
         self.send_button = QPushButton("发送")
         self.send_button.setObjectName("primaryButton")
         self.send_button.clicked.connect(self.send_prompt)
+        self.stop_button = QPushButton("停止")
+        self.stop_button.setObjectName("stopButton")
+        self.stop_button.clicked.connect(self.stop_current_request)
+        self.stop_button.hide()
         self.new_button = QPushButton("新会话")
         self.new_button.setObjectName("ghostButton")
         self.new_button.clicked.connect(self.new_session)
@@ -2386,6 +2391,7 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.permission_combo, 0)
         button_row.addStretch(1)
         button_row.addWidget(self.new_button)
+        button_row.addWidget(self.stop_button)
         button_row.addWidget(self.send_button)
         self.input_card.layout().addLayout(feedback_row)
         self.input_card.layout().addWidget(self.request_error_label)
@@ -2818,6 +2824,20 @@ class MainWindow(QMainWindow):
               padding: 6px 16px;
               font-size: 12px;
               font-weight: 700;
+            }
+            QPushButton#stopButton {
+              background: #fff5ee;
+              color: #a84834;
+              border: 1px solid #efc8b7;
+              border-radius: 16px;
+              min-width: 58px;
+              min-height: 34px;
+              padding: 6px 16px;
+              font-size: 12px;
+              font-weight: 700;
+            }
+            QPushButton#stopButton:hover {
+              background: #fde9dd;
             }
             QPushButton#ghostButton {
               background: #efe5d7;
@@ -3272,6 +3292,8 @@ class MainWindow(QMainWindow):
     def update_request_controls(self) -> None:
         busy = self.is_current_session_busy()
         self.send_button.setEnabled(not busy)
+        self.stop_button.setVisible(busy)
+        self.stop_button.setEnabled(busy)
         self.add_attachment_button.setEnabled(not busy)
         self.input_box.setEnabled(not busy)
         self.new_button.setEnabled(True)
@@ -3282,7 +3304,7 @@ class MainWindow(QMainWindow):
             self.request_error_label.hide()
             self.retry_button.hide()
             return
-        if self.request_state_label.text() == "处理中...":
+        if self.request_state_label.text() in {"处理中...", "正在停止..."}:
             self.set_request_ready_feedback()
 
     def begin_request_feedback(self, prompt: str, attachments: list[AttachmentInfo] | None = None) -> None:
@@ -3312,6 +3334,7 @@ class MainWindow(QMainWindow):
         self.request_state_label.setText("")
         self.request_error_label.hide()
         self.retry_button.hide()
+        self.stop_button.hide()
 
     def set_request_failed_feedback(self, error: str) -> None:
         compact_error = " ".join((error or "未知错误").split()).strip()
@@ -3331,6 +3354,19 @@ class MainWindow(QMainWindow):
         self.pending_attachments = [AttachmentInfo(path=item.path, kind=item.kind) for item in self.last_attachments]
         self.refresh_attachment_widgets()
         self.send_prompt()
+
+    def stop_current_request(self) -> None:
+        request_key = self.current_request_key()
+        worker = self.workers.get(request_key)
+        if worker is None or not worker.isRunning():
+            return
+        self.request_state_label.setObjectName("requestStateRunning")
+        self.request_state_label.setStyleSheet("")
+        self.request_state_label.setText("正在停止...")
+        self.stop_button.setEnabled(False)
+        self.set_status("正在停止当前请求...", "running")
+        self.restore_request_account()
+        worker.stop()
 
     def toggle_pin_active_session(self) -> None:
         if not self.active_session_id:
@@ -3872,6 +3908,7 @@ class MainWindow(QMainWindow):
 
     def on_worker_thread_finished(self) -> None:
         worker = self.sender()
+        was_stopping = self.request_state_label.text() == "正在停止..."
         for key, running_worker in list(self.workers.items()):
             if running_worker is worker:
                 self.workers.pop(key, None)
@@ -3883,6 +3920,8 @@ class MainWindow(QMainWindow):
             self.worker = None
         worker.deleteLater()
         self.update_request_controls()
+        if was_stopping:
+            self.set_status("已停止当前请求", "idle")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         for worker in list(self.workers.values()):

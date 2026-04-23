@@ -94,6 +94,7 @@ cd codex-ui-linux-x86_64
 ## 快捷键
 
 - `Ctrl+Enter` / `Ctrl+Return`：发送当前输入
+- `Esc`：停止当前正在处理的请求，也可点击输入区右下角“停止”
 - `Ctrl+N`：新建会话
 - `/model`：在输入框中打开模型和推理强度选择；也可用 `/model gpt-5.4 high` 直接切换
 - `/`：聚焦会话搜索
