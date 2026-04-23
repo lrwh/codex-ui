@@ -15,6 +15,21 @@
 - 本地设置：支持工作目录、模型、权限模式、Codex 路径和输入法策略配置。
 - 桌面发布：支持 PyInstaller 打包，并可安装 `.desktop` 启动入口和应用图标。
 
+## 目录结构
+
+```text
+.
+├── desktop_app.py                  # PySide6 桌面客户端主程序
+├── capture_desktop.py              # 离屏截图辅助脚本
+├── codex-ui.spec                   # PyInstaller 配置
+├── packaging/                      # 桌面入口、图标和启动脚本
+├── scripts/package_desktop.sh      # 桌面版打包脚本
+├── cmd/                            # Go 终端版入口
+├── internal/                       # Go 终端版内部包
+├── README.md
+└── TASKS.md
+```
+
 ## 预置要求
 
 运行前需要本机已经具备：
@@ -117,32 +132,6 @@ cd codex-ui-linux-x86_64
 - `fcitx`：强制使用 `fcitx`。
 - `ibus`：强制使用 `ibus`，并自动尝试启动 `ibus-daemon`。
 - `xim`：强制使用 Qt 的 `xim` 回退模式。
-
-## GitLab 提交
-
-如果这是一个新仓库，可以按下面流程关联 GitLab：
-
-```bash
-git remote add origin <your-gitlab-repo-url>
-git push -u origin main
-```
-
-如果远端仓库已经有内容，先拉取或确认分支策略后再推送，避免覆盖远端历史。
-
-## 目录结构
-
-```text
-.
-├── desktop_app.py                  # PySide6 桌面客户端主程序
-├── capture_desktop.py              # 离屏截图辅助脚本
-├── codex-ui.spec                   # PyInstaller 配置
-├── packaging/                      # 桌面入口、图标和启动脚本
-├── scripts/package_desktop.sh      # 桌面版打包脚本
-├── cmd/                            # Go 终端版入口
-├── internal/                       # Go 终端版内部包
-├── README.md
-└── TASKS.md
-```
 
 ## 注意事项
 
