@@ -19,13 +19,15 @@
 
 ```text
 .
-├── desktop_app.py                  # PySide6 桌面客户端主程序
+├── desktop_app.py                  # PySide6 桌面客户端入口
+├── desktop_app_core.py             # 配置、数据模型和会话/账号数据读取
+├── desktop_app_workers.py          # 后台任务线程
+├── desktop_app_ui.py               # 对话框和复用 UI 组件
+├── desktop_app_window*.py          # 主窗口和功能 mixin
 ├── capture_desktop.py              # 离屏截图辅助脚本
 ├── codex-ui.spec                   # PyInstaller 配置
 ├── packaging/                      # 桌面入口、图标和启动脚本
 ├── scripts/package_desktop.sh      # 桌面版打包脚本
-├── cmd/                            # Go 终端版入口
-├── internal/                       # Go 终端版内部包
 ├── README.md
 └── TASKS.md
 ```
