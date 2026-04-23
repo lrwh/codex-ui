@@ -12,7 +12,7 @@
 - 多账号：读取 `~/.codex/accounts/registry.json`，支持账号管理、切换和用量刷新。
 - 长会话优化：默认渲染最近消息，支持按批加载更早内容。
 - 附件输入：提示词支持图片、`.log`、`.md`、`.markdown` 附件。
-- 本地设置：支持工作目录、模型、权限模式、Codex 路径和输入法策略配置。
+- 本地设置：支持工作目录、权限模式、Codex 路径和输入法策略配置；模型和推理强度通过输入框 `/model` 切换。
 - 桌面发布：支持 PyInstaller 打包，并可安装 `.desktop` 启动入口和应用图标。
 
 ## 目录结构
@@ -95,6 +95,7 @@ cd codex-ui-linux-x86_64
 
 - `Ctrl+Enter` / `Ctrl+Return`：发送当前输入
 - `Ctrl+N`：新建会话
+- `/model`：在输入框中打开模型和推理强度选择；也可用 `/model gpt-5.4 high` 直接切换
 - `/`：聚焦会话搜索
 - `PgUp` / `PgDown`：会话或消息区域滚动
 - `Home` / `End`：跳到会话列表首尾
@@ -115,6 +116,7 @@ cd codex-ui-linux-x86_64
   "codex_home": "~/.codex",
   "work_dir": "/home/liurui/code",
   "model": "",
+  "model_reasoning_effort": "",
   "approval_policy": "on-request",
   "sandbox_mode": "workspace-write",
   "skip_git_repo_check": true,
