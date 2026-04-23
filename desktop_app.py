@@ -56,6 +56,7 @@ class AppConfig:
     codex_home: Path
     work_dir: Path
     model: str
+    model_reasoning_effort: str
     full_auto: bool
     approval_policy: str
     sandbox_mode: str
@@ -121,12 +122,64 @@ class LocalAccountInfo:
     is_active: bool
 
 
+DEFAULT_MODEL_CHOICES = ["", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"]
+DEFAULT_REASONING_EFFORT_CHOICES = [
+    ("默认", ""),
+    ("低", "low"),
+    ("中", "medium"),
+    ("高", "high"),
+    ("极高", "xhigh"),
+]
+
+
 def truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     if limit <= 1:
         return text[:limit]
     return text[: limit - 1] + "…"
+
+
+def model_display_name(model: str) -> str:
+    model = (model or "").strip()
+    if not model:
+        return "默认"
+    return model
+
+
+def model_choices(current_model: str = "") -> list[str]:
+    choices = DEFAULT_MODEL_CHOICES[:]
+    current = (current_model or "").strip()
+    if current and current not in choices:
+        choices.insert(1, current)
+    return choices
+
+
+def normalize_reasoning_effort(value: object) -> str:
+    effort = str(value or "").strip().lower()
+    aliases = {
+        "default": "",
+        "reset": "",
+        "none": "",
+        "默认": "",
+        "低": "low",
+        "中": "medium",
+        "高": "high",
+        "极高": "xhigh",
+    }
+    effort = aliases.get(effort, effort)
+    valid = {item[1] for item in DEFAULT_REASONING_EFFORT_CHOICES}
+    if effort in valid:
+        return effort
+    return ""
+
+
+def reasoning_effort_display_name(effort: str) -> str:
+    effort = normalize_reasoning_effort(effort)
+    for label, value in DEFAULT_REASONING_EFFORT_CHOICES:
+        if value == effort:
+            return label
+    return "默认"
 
 
 def humanize_count(value: object) -> str:
@@ -851,6 +904,7 @@ def save_config(config: AppConfig) -> None:
         "codex_home": str(config.codex_home),
         "work_dir": str(config.work_dir),
         "model": config.model,
+        "model_reasoning_effort": config.model_reasoning_effort,
         "full_auto": config.full_auto,
         "approval_policy": config.approval_policy,
         "sandbox_mode": config.sandbox_mode,
@@ -1214,6 +1268,7 @@ def load_config() -> AppConfig:
         "codex_home": str(home / ".codex"),
         "work_dir": str(Path.cwd()),
         "model": "",
+        "model_reasoning_effort": "",
         "full_auto": True,
         "approval_policy": "on-request",
         "sandbox_mode": "workspace-write",
@@ -1231,6 +1286,7 @@ def load_config() -> AppConfig:
         codex_home=Path(default["codex_home"]).expanduser(),
         work_dir=Path(default["work_dir"]).expanduser(),
         model=default["model"],
+        model_reasoning_effort=normalize_reasoning_effort(default.get("model_reasoning_effort")),
         full_auto=default["full_auto"],
         approval_policy=normalize_approval_policy(default.get("approval_policy")),
         sandbox_mode=normalize_sandbox_mode(default.get("sandbox_mode")),
@@ -1371,6 +1427,8 @@ class CodexWorker(QThread):
             args.append("--skip-git-repo-check")
         if self.config.model:
             args.extend(["-m", self.config.model])
+        if self.config.model_reasoning_effort:
+            args.extend(["-c", f'model_reasoning_effort="{self.config.model_reasoning_effort}"'])
         for image_path in self.image_paths:
             args.extend(["-i", image_path])
         if not self.session_id:
@@ -1682,6 +1740,91 @@ class AccountDialog(QDialog):
         self.window.open_accounts_directory()
 
 
+class ModelSelectionDialog(QDialog):
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__(window)
+        self.window = window
+        self.selected_model = window.config.model
+        self.selected_reasoning_effort = window.config.model_reasoning_effort
+        self.setObjectName("accountDialog")
+        self.setWindowTitle("选择模型")
+        self.setModal(True)
+        self.resize(420, 430)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        title = QLabel("选择模型")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("用于后续发送；默认会跟随 Codex CLI 配置")
+        subtitle.setObjectName("pageSubtitle")
+        root.addWidget(title)
+        root.addWidget(subtitle)
+
+        self.model_list = QListWidget()
+        self.model_list.setObjectName("sessionList")
+        self.model_list.setFrameShape(QFrame.NoFrame)
+        self.model_list.setSpacing(4)
+        current = (window.config.model or "").strip()
+        for model in model_choices(current):
+            label = "默认（Codex CLI 配置）" if not model else model
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, model)
+            self.model_list.addItem(item)
+            if model == current:
+                self.model_list.setCurrentItem(item)
+        self.model_list.itemDoubleClicked.connect(lambda _item: self.on_save())
+        self.model_list.currentItemChanged.connect(self.on_current_model_changed)
+        root.addWidget(self.model_list, 1)
+
+        custom_label = QLabel("自定义模型")
+        custom_label.setObjectName("cardMeta")
+        self.custom_model_input = QLineEdit(current)
+        self.custom_model_input.setObjectName("searchInput")
+        self.custom_model_input.setPlaceholderText("例如 gpt-5.4")
+        root.addWidget(custom_label)
+        root.addWidget(self.custom_model_input)
+
+        effort_label = QLabel("推理强度")
+        effort_label.setObjectName("cardMeta")
+        self.reasoning_effort_combo = QComboBox()
+        self.reasoning_effort_combo.setObjectName("searchInput")
+        current_effort = normalize_reasoning_effort(window.config.model_reasoning_effort)
+        for label, value in DEFAULT_REASONING_EFFORT_CHOICES:
+            item_label = "默认（Codex CLI 配置）" if not value else label
+            self.reasoning_effort_combo.addItem(item_label, value)
+        effort_index = self.reasoning_effort_combo.findData(current_effort)
+        if effort_index >= 0:
+            self.reasoning_effort_combo.setCurrentIndex(effort_index)
+        root.addWidget(effort_label)
+        root.addWidget(self.reasoning_effort_combo)
+
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        cancel = QPushButton("取消")
+        cancel.setObjectName("scopeButton")
+        cancel.clicked.connect(self.reject)
+        save = QPushButton("应用")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.on_save)
+        action_row.addStretch(1)
+        action_row.addWidget(cancel, 0)
+        action_row.addWidget(save, 0)
+        root.addLayout(action_row)
+
+    def on_current_model_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            return
+        self.custom_model_input.setText(str(current.data(Qt.UserRole) or ""))
+
+    def on_save(self) -> None:
+        self.selected_model = self.custom_model_input.text().strip()
+        self.selected_reasoning_effort = normalize_reasoning_effort(self.reasoning_effort_combo.currentData())
+        self.accept()
+
+
 class SettingsDialog(QDialog):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
@@ -1704,11 +1847,6 @@ class SettingsDialog(QDialog):
 
         self.work_dir_input = QLineEdit(str(window.config.work_dir))
         self.work_dir_input.setObjectName("searchInput")
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
-        self.model_combo.setObjectName("searchInput")
-        self.model_combo.addItems(["", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])
-        self.model_combo.setCurrentText(window.config.model)
         self.codex_path_input = QLineEdit(window.config.codex_path)
         self.codex_path_input.setObjectName("searchInput")
 
@@ -1735,7 +1873,6 @@ class SettingsDialog(QDialog):
 
         fields = [
             ("工作目录", self.work_dir_input),
-            ("模型", self.model_combo),
             ("权限模式", self.permission_mode_combo),
             ("Codex 路径", self.codex_path_input),
             ("输入法策略", self.input_method_combo),
@@ -1780,7 +1917,8 @@ class SettingsDialog(QDialog):
             codex_path=codex_path,
             codex_home=self.window.config.codex_home,
             work_dir=work_dir,
-            model=self.model_combo.currentText().strip(),
+            model=self.window.config.model,
+            model_reasoning_effort=self.window.config.model_reasoning_effort,
             full_auto=(approval_policy == "on-request" and sandbox_mode == "workspace-write"),
             approval_policy=approval_policy,
             sandbox_mode=sandbox_mode,
@@ -1885,12 +2023,27 @@ class MessageBubble(QFrame):
 
 
 class ComposerInput(QPlainTextEdit):
+    command_requested = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self.setAttribute(Qt.WA_InputMethodEnabled, True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAcceptDrops(False)
         self.setTabChangesFocus(False)
+
+    def keyPressEvent(self, event) -> None:
+        stripped = self.toPlainText().strip()
+        command = stripped.split(None, 1)[0].lower() if stripped else ""
+        if (
+            event.key() in {Qt.Key_Return, Qt.Key_Enter}
+            and not (event.modifiers() & Qt.ControlModifier)
+            and command == "/model"
+        ):
+            self.command_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -1974,6 +2127,7 @@ class MainWindow(QMainWindow):
             ("Ctrl+N", self.new_session),
             ("Ctrl+Return", self.send_prompt),
             ("Ctrl+Enter", self.send_prompt),
+            ("Esc", self.stop_current_request),
         ]
         for sequence, handler in bindings:
             shortcut = QShortcut(QKeySequence(sequence), self)
@@ -2241,6 +2395,7 @@ class MainWindow(QMainWindow):
         self.input_box.setInputMethodHints(Qt.ImhMultiLine)
         self.input_box.setFixedHeight(120)
         self.input_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.input_box.command_requested.connect(self.send_prompt)
         template_row = QHBoxLayout()
         template_row.setContentsMargins(0, 0, 0, 0)
         template_row.setSpacing(8)
@@ -2273,6 +2428,10 @@ class MainWindow(QMainWindow):
         self.send_button = QPushButton("发送")
         self.send_button.setObjectName("primaryButton")
         self.send_button.clicked.connect(self.send_prompt)
+        self.stop_button = QPushButton("停止")
+        self.stop_button.setObjectName("stopButton")
+        self.stop_button.clicked.connect(self.stop_current_request)
+        self.stop_button.hide()
         self.new_button = QPushButton("新会话")
         self.new_button.setObjectName("ghostButton")
         self.new_button.clicked.connect(self.new_session)
@@ -2285,6 +2444,7 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.permission_combo, 0)
         button_row.addStretch(1)
         button_row.addWidget(self.new_button)
+        button_row.addWidget(self.stop_button)
         button_row.addWidget(self.send_button)
         self.input_card.layout().addLayout(feedback_row)
         self.input_card.layout().addWidget(self.request_error_label)
@@ -2305,7 +2465,7 @@ class MainWindow(QMainWindow):
         status_layout.setSpacing(14)
         self.usage_label = QLabel("in 0 · cache 0 · out 0")
         self.usage_label.setObjectName("cardMeta")
-        self.help_label = QLabel("搜索 /  Ctrl+Enter 发送  ·  Ctrl+N 新会话")
+        self.help_label = QLabel("搜索 /  /model 选模型/推理  ·  Ctrl+Enter 发送  ·  Ctrl+N 新会话")
         self.help_label.setObjectName("cardMeta")
         status_layout.addWidget(self.usage_label, 0)
         status_layout.addStretch(1)
@@ -2722,6 +2882,20 @@ class MainWindow(QMainWindow):
               padding: 6px 16px;
               font-size: 12px;
               font-weight: 700;
+            }
+            QPushButton#stopButton {
+              background: #fff5ee;
+              color: #a84834;
+              border: 1px solid #efc8b7;
+              border-radius: 16px;
+              min-width: 58px;
+              min-height: 34px;
+              padding: 6px 16px;
+              font-size: 12px;
+              font-weight: 700;
+            }
+            QPushButton#stopButton:hover {
+              background: #fde9dd;
             }
             QPushButton#ghostButton {
               background: #efe5d7;
@@ -3176,6 +3350,8 @@ class MainWindow(QMainWindow):
     def update_request_controls(self) -> None:
         busy = self.is_current_session_busy()
         self.send_button.setEnabled(not busy)
+        self.stop_button.setVisible(busy)
+        self.stop_button.setEnabled(busy)
         self.add_attachment_button.setEnabled(not busy)
         self.input_box.setEnabled(not busy)
         self.new_button.setEnabled(True)
@@ -3186,7 +3362,7 @@ class MainWindow(QMainWindow):
             self.request_error_label.hide()
             self.retry_button.hide()
             return
-        if self.request_state_label.text() == "处理中...":
+        if self.request_state_label.text() in {"处理中...", "正在停止..."}:
             self.set_request_ready_feedback()
 
     def begin_request_feedback(self, prompt: str, attachments: list[AttachmentInfo] | None = None) -> None:
@@ -3216,6 +3392,7 @@ class MainWindow(QMainWindow):
         self.request_state_label.setText("")
         self.request_error_label.hide()
         self.retry_button.hide()
+        self.stop_button.hide()
 
     def set_request_failed_feedback(self, error: str) -> None:
         compact_error = " ".join((error or "未知错误").split()).strip()
@@ -3238,6 +3415,19 @@ class MainWindow(QMainWindow):
         self.pending_attachments = [AttachmentInfo(path=item.path, kind=item.kind) for item in self.last_attachments]
         self.refresh_attachment_widgets()
         self.send_prompt()
+
+    def stop_current_request(self) -> None:
+        request_key = self.current_request_key()
+        worker = self.workers.get(request_key)
+        if worker is None or not worker.isRunning():
+            return
+        self.request_state_label.setObjectName("requestStateRunning")
+        self.request_state_label.setStyleSheet("")
+        self.request_state_label.setText("正在停止...")
+        self.stop_button.setEnabled(False)
+        self.set_status("正在停止当前请求...", "running")
+        self.restore_request_account()
+        worker.stop()
 
     def toggle_pin_active_session(self) -> None:
         if not self.active_session_id:
@@ -3590,6 +3780,75 @@ class MainWindow(QMainWindow):
         self.input_box.setFocus()
         self.input_box.moveCursor(QTextCursor.End)
 
+    def normalize_model_command_value(self, raw: str) -> str:
+        value = (raw or "").strip()
+        if value.lower() in {"default", "reset", "none"} or value in {"默认", "清空"}:
+            return ""
+        return value
+
+    def model_settings_label(self, model: str, reasoning_effort: str) -> str:
+        return (
+            f"模型: {model_display_name(model)}"
+            f" · 推理: {reasoning_effort_display_name(reasoning_effort)}"
+        )
+
+    def apply_model_settings(
+        self,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        next_model = self.config.model if model is None else self.normalize_model_command_value(model)
+        next_reasoning_effort = (
+            self.config.model_reasoning_effort
+            if reasoning_effort is None
+            else normalize_reasoning_effort(reasoning_effort)
+        )
+        if next_model == self.config.model and next_reasoning_effort == self.config.model_reasoning_effort:
+            self.set_status(f"当前{self.model_settings_label(next_model, next_reasoning_effort)}", "idle")
+            return
+        self.config.model = next_model
+        self.config.model_reasoning_effort = next_reasoning_effort
+        save_config(self.config)
+        self.set_status(f"已切换 {self.model_settings_label(next_model, next_reasoning_effort)}", "idle")
+
+    def open_model_selection_dialog(self) -> None:
+        dialog = ModelSelectionDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            self.set_status("已取消模型选择", "idle")
+            return
+        self.apply_model_settings(dialog.selected_model, dialog.selected_reasoning_effort)
+
+    def parse_model_command_args(self, raw: str) -> tuple[str | None, str | None]:
+        tokens = (raw or "").split()
+        if not tokens:
+            return None, None
+        if len(tokens) == 1 and normalize_reasoning_effort(tokens[0]):
+            return None, tokens[0]
+        if len(tokens) == 1 and tokens[0] in {"默认", "清空"}:
+            return "", None
+        model = tokens[0]
+        reasoning_effort = tokens[1] if len(tokens) > 1 else None
+        return model, reasoning_effort
+
+    def handle_composer_command(self, prompt: str) -> bool:
+        stripped = (prompt or "").strip()
+        if not stripped.startswith("/"):
+            return False
+        parts = stripped.split(None, 1)
+        command = parts[0] if parts else ""
+        rest = parts[1] if len(parts) > 1 else ""
+        if command.strip().lower() != "/model":
+            return False
+        self.input_box.clear()
+        if rest.strip():
+            model, reasoning_effort = self.parse_model_command_args(rest)
+            self.apply_model_settings(model, reasoning_effort)
+        else:
+            self.open_model_selection_dialog()
+        if self.input_box.isEnabled():
+            self.input_box.setFocus()
+        return True
+
     def new_session(self) -> None:
         self.active_session_id = None
         self.refresh_session_list()
@@ -3603,6 +3862,8 @@ class MainWindow(QMainWindow):
         prompt = self.input_box.toPlainText().strip()
         attachments = [AttachmentInfo(path=item.path, kind=item.kind) for item in self.pending_attachments]
         if not prompt and not attachments:
+            return
+        if prompt and self.handle_composer_command(prompt):
             return
         missing_paths = [item.path for item in attachments if not Path(item.path).exists()]
         if missing_paths:
@@ -3707,6 +3968,7 @@ class MainWindow(QMainWindow):
 
     def on_worker_thread_finished(self) -> None:
         worker = self.sender()
+        was_stopping = self.request_state_label.text() == "正在停止..."
         for key, running_worker in list(self.workers.items()):
             if running_worker is worker:
                 self.workers.pop(key, None)
@@ -3718,6 +3980,8 @@ class MainWindow(QMainWindow):
             self.worker = None
         worker.deleteLater()
         self.update_request_controls()
+        if was_stopping:
+            self.set_status("已停止当前请求", "idle")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         for worker in list(self.workers.values()):
