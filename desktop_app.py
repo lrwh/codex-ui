@@ -15,7 +15,16 @@ from pathlib import Path
 
 import PySide6
 from PySide6.QtCore import QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFont, QGuiApplication, QIcon, QKeySequence, QShortcut, QTextCursor
+from PySide6.QtGui import (
+    QCloseEvent,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QIcon,
+    QKeySequence,
+    QShortcut,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -725,6 +734,44 @@ def extract_stream_delta_text(event: dict) -> str:
     return ""
 
 
+def extract_error_text_from_event(event: dict) -> str:
+    if not isinstance(event, dict):
+        return ""
+
+    event_type = str(event.get("type") or "")
+    error_like_types = {
+        "error",
+        "turn.failed",
+        "response.failed",
+        "response.error",
+        "exec.error",
+    }
+
+    direct_parts: list[str] = []
+    for key in ("message", "error", "detail", "reason"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            direct_parts.append(value.strip())
+        elif isinstance(value, dict):
+            for nested_key in ("message", "error", "detail", "reason"):
+                nested_value = value.get(nested_key)
+                if isinstance(nested_value, str) and nested_value.strip():
+                    direct_parts.append(nested_value.strip())
+
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        payload_type = str(payload.get("type") or "")
+        if payload_type in error_like_types:
+            for key in ("message", "error", "detail", "reason"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    direct_parts.append(value.strip())
+
+    if event_type in error_like_types or direct_parts:
+        return "\n".join(dict.fromkeys(direct_parts)).strip()
+    return ""
+
+
 def ui_state_dir() -> Path:
     path = Path.home() / ".config" / "codex-ui"
     path.mkdir(parents=True, exist_ok=True)
@@ -1366,6 +1413,7 @@ class CodexWorker(QThread):
         stdout_reader.start()
         stderr_reader.start()
         open_streams = 2
+        stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
 
         while open_streams > 0:
@@ -1381,8 +1429,8 @@ class CodexWorker(QThread):
                 open_streams -= 1
                 continue
 
+            stripped = line.strip()
             if stream_name == "stderr":
-                stripped = line.strip()
                 if stripped:
                     stderr_chunks.append(stripped)
                 continue
@@ -1390,7 +1438,12 @@ class CodexWorker(QThread):
             try:
                 item = json.loads(line)
             except json.JSONDecodeError:
+                if stripped:
+                    stdout_chunks.append(stripped)
                 continue
+            error_text = extract_error_text_from_event(item)
+            if error_text:
+                stdout_chunks.append(error_text)
             msg_type = item.get("type")
             delta_text = extract_stream_delta_text(item)
             if delta_text:
@@ -1413,7 +1466,7 @@ class CodexWorker(QThread):
 
         code = proc.wait()
         if code != 0:
-            err = "\n".join(stderr_chunks).strip() or f"codex exited with {code}"
+            err = "\n".join(stdout_chunks + stderr_chunks).strip() or f"codex exited with {code}"
             if self.isInterruptionRequested():
                 return
             self.failed.emit(err)
@@ -2315,8 +2368,13 @@ class MainWindow(QMainWindow):
         return card
 
     def apply_styles(self) -> None:
-        font = QFont("Noto Sans CJK SC", 12)
-        QApplication.instance().setFont(font)
+        app = QApplication.instance()
+        if app is not None:
+            families = set(QFontDatabase.families())
+            for family in ("Noto Sans CJK SC", "Noto Sans CJK SC Regular", "WenQuanYi Zen Hei", "Sans Serif"):
+                if family in families:
+                    app.setFont(QFont(family, 12))
+                    break
         self.setStyleSheet(
             """
             QMainWindow, QWidget#page {
@@ -3169,6 +3227,9 @@ class MainWindow(QMainWindow):
         self.request_error_label.show()
         if self.last_prompt:
             self.retry_button.show()
+        self.input_box.setEnabled(True)
+        self.send_button.setEnabled(True)
+        self.add_attachment_button.setEnabled(True)
 
     def retry_last_prompt(self) -> None:
         if (not self.last_prompt and not self.last_attachments) or self.is_current_session_busy():
@@ -3630,8 +3691,7 @@ class MainWindow(QMainWindow):
         if request_key == self.current_request_key():
             self.finish_request_feedback()
             self.set_request_failed_feedback(error)
-        self.set_status("", "idle")
-        QMessageBox.critical(self, "codex-ui", error or "未知错误")
+        self.set_status("发送失败", "idle")
 
     def on_finished_ok(self, request_key: str) -> None:
         request_key = self.resolve_request_key(request_key)
