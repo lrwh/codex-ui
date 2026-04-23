@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+.venv-*/
+venv/
+env/
+
+# PyInstaller
+build/
+dist/
+release/
+*.spec.bak
+
+# Generated previews
+desktop-preview.png
+desktop-layout-*.png
+
+# Local editor and OS files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Local runtime/config
+.env
+.env.*

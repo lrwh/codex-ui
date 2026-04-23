@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=codex-ui
+GenericName=Codex Desktop Client
+Comment=Codex 桌面客户端
+Exec=__APPDIR__/run-codex-ui.sh
+Icon=codex-ui
+Terminal=false
+Categories=Development;Utility;
+Keywords=codex;assistant;desktop;ai;
+StartupNotify=true
+StartupWMClass=codex-ui
