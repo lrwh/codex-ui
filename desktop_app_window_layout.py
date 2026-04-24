@@ -474,11 +474,9 @@ class WindowLayoutMixin:
     def apply_styles(self) -> None:
                 app = QApplication.instance()
                 if app is not None:
-                    families = set(QFontDatabase.families())
-                    for family in ("Noto Sans CJK SC", "Noto Sans CJK SC Regular", "WenQuanYi Zen Hei", "Sans Serif"):
-                        if family in families:
-                            app.setFont(QFont(family, 12))
-                            break
+                    default_font = app.font()
+                    default_font.setPointSize(12)
+                    app.setFont(default_font)
                 self.setStyleSheet(
                     """
                     QMainWindow, QWidget#page {

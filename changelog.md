@@ -4,6 +4,8 @@
 
 ## 2026-04-24
 
+- 21:10 提交代码：更新 desktop_app_window_layout.py
+
 - 12:03 提交代码：新增 package_deb.sh；更新 desktop_app_ui.py, desktop_app_window.py, desktop_app_window_common.py, desktop_app_window_conversation.py 等 6 项
 
 - 支持输入框直接从剪贴板粘贴图片，并自动落盘为图片附件。
