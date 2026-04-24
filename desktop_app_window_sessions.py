@@ -159,6 +159,7 @@ class WindowSessionMixin:
                 visible_ids = {session.session_id for session in self.sessions}
                 self.active_session_id = previous if previous in visible_ids else (self.sessions[0].session_id if self.sessions else None)
                 self.apply_session_filters()
+                self.update_work_dir_label()
                 self.load_active_session(scroll_to_top=False)
 
     def load_more_sessions(self) -> None:

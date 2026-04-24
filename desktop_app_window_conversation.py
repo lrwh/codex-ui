@@ -54,6 +54,28 @@ from desktop_app_workers import *
 from desktop_app_ui import *
 
 class WindowConversationMixin:
+    def append_attachments(self, paths: list[str]) -> tuple[int, list[str]]:
+                unsupported: list[str] = []
+                added = 0
+                existing = {item.path for item in self.pending_attachments}
+                for raw_path in paths:
+                    path = str(Path(raw_path).expanduser())
+                    if not path or path in existing:
+                        continue
+                    if not Path(path).is_file():
+                        unsupported.append(Path(path).name or path)
+                        continue
+                    kind = detect_attachment_kind(path)
+                    if kind is None:
+                        unsupported.append(Path(path).name)
+                        continue
+                    self.pending_attachments.append(AttachmentInfo(path=path, kind=kind))
+                    existing.add(path)
+                    added += 1
+                if added:
+                    self.refresh_attachment_widgets()
+                return added, unsupported
+
     def refresh_attachment_widgets(self) -> None:
                 self.clear_layout_widgets(self.attachment_list_layout)
                 if not self.pending_attachments:
@@ -87,23 +109,42 @@ class WindowConversationMixin:
                 )
                 if not files:
                     return
-                unsupported: list[str] = []
-                existing = {item.path for item in self.pending_attachments}
-                for path in files:
-                    kind = detect_attachment_kind(path)
-                    if kind is None:
-                        unsupported.append(Path(path).name)
-                        continue
-                    if path in existing:
-                        continue
-                    self.pending_attachments.append(AttachmentInfo(path=path, kind=kind))
-                    existing.add(path)
-                self.refresh_attachment_widgets()
+                added, unsupported = self.append_attachments(files)
+                if added:
+                    self.set_status(f"已添加 {added} 个附件", "idle")
                 if unsupported:
                     QMessageBox.information(
                         self,
                         "codex-ui",
                         "以下附件类型暂不支持：\n" + "\n".join(unsupported),
+                    )
+
+    def add_pasted_attachments(self, paths: list[str]) -> None:
+                added, unsupported = self.append_attachments(paths)
+                if added:
+                    self.set_status(f"已从剪贴板添加 {added} 个附件", "idle")
+                if unsupported:
+                    QMessageBox.information(
+                        self,
+                        "codex-ui",
+                        "以下粘贴内容暂不支持作为附件：\n" + "\n".join(unsupported),
+                    )
+
+    def add_clipboard_image_attachment(self, image) -> None:
+                target = clipboard_attachment_dir() / f"clipboard-{current_local_iso().replace(':', '').replace('+', '_')}.png"
+                if not image.save(str(target), "PNG"):
+                    QMessageBox.critical(self, "codex-ui", "剪贴板图片保存失败，无法作为附件添加。")
+                    return
+                added, unsupported = self.append_attachments([str(target)])
+                if added:
+                    self.set_status("已从剪贴板添加图片附件", "idle")
+                    return
+                target.unlink(missing_ok=True)
+                if unsupported:
+                    QMessageBox.information(
+                        self,
+                        "codex-ui",
+                        "当前剪贴板图片无法作为支持的附件添加。",
                     )
 
     def current_request_key(self) -> str:
@@ -487,7 +528,10 @@ class WindowConversationMixin:
 
     def new_session(self) -> None:
                 self.active_session_id = None
+                self.new_session_work_dir = self.config.work_dir
+                self.new_session_work_dir_overridden = False
                 self.refresh_session_list()
+                self.update_work_dir_label()
                 self.load_active_session(scroll_to_top=True)
                 self.set_status("已切换到新会话", "idle")
 
@@ -530,7 +574,13 @@ class WindowConversationMixin:
                 self.set_status("", "running")
 
                 image_paths = [item.path for item in attachments if item.kind == "image"]
-                worker = CodexWorker(self.config, self.active_session_id, final_prompt, image_paths=image_paths)
+                worker = CodexWorker(
+                    self.config,
+                    self.active_session_id,
+                    final_prompt,
+                    image_paths=image_paths,
+                    work_dir=self.current_effective_work_dir(),
+                )
                 self.workers[request_key] = worker
                 self.worker = worker
                 self.begin_request_feedback(prompt, attachments)
@@ -553,9 +603,14 @@ class WindowConversationMixin:
                         self.streaming_texts[session_id] = self.streaming_texts.pop(request_key)
                     if request_key in self.streaming_bubbles:
                         self.streaming_bubbles[session_id] = self.streaming_bubbles.pop(request_key)
+                    if request_key == "__new__" and self.new_session_work_dir_overridden:
+                        self.session_work_dir_overrides[session_id] = str(self.new_session_work_dir)
+                        save_session_work_dir_overrides(self.session_work_dir_overrides)
+                        self.new_session_work_dir_overridden = False
                     self.active_session_id = session_id
                     self.bind_session_to_active_account(session_id)
                     self.mark_session_updated(session_id)
+                    self.update_work_dir_label()
                     self.update_request_controls()
 
     def on_assistant_message(self, request_key: str, text: str) -> None:

@@ -21,6 +21,7 @@ from PySide6.QtGui import (
     QFontDatabase,
     QGuiApplication,
     QIcon,
+    QImage,
     QKeySequence,
     QShortcut,
     QTextCursor,
@@ -491,6 +492,8 @@ class MessageBubble(QFrame):
 
 class ComposerInput(QPlainTextEdit):
     command_requested = Signal()
+    attachments_pasted = Signal(list)
+    clipboard_image_pasted = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -498,6 +501,25 @@ class ComposerInput(QPlainTextEdit):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAcceptDrops(False)
         self.setTabChangesFocus(False)
+
+    def canInsertFromMimeData(self, source) -> bool:
+        if self._extract_local_file_paths(source):
+            return True
+        if source is not None and source.hasImage():
+            return True
+        return super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source) -> None:
+        file_paths = self._extract_local_file_paths(source)
+        if file_paths:
+            self.attachments_pasted.emit(file_paths)
+            return
+        if source is not None and source.hasImage():
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                self.clipboard_image_pasted.emit(image)
+                return
+        super().insertFromMimeData(source)
 
     def keyPressEvent(self, event) -> None:
         stripped = self.toPlainText().strip()
@@ -512,4 +534,15 @@ class ComposerInput(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
+    def _extract_local_file_paths(self, source) -> list[str]:
+        if source is None or not source.hasUrls():
+            return []
+        paths: list[str] = []
+        for url in source.urls():
+            if not url.isLocalFile():
+                continue
+            local_path = url.toLocalFile().strip()
+            if local_path:
+                paths.append(local_path)
+        return paths
 

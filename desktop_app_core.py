@@ -233,6 +233,12 @@ def attachment_label(path: str) -> str:
     return Path(path).name
 
 
+def clipboard_attachment_dir() -> Path:
+    path = ui_state_dir() / "clipboard-attachments"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def render_attachment_summary(attachments: list[AttachmentInfo]) -> str:
     if not attachments:
         return ""
@@ -846,6 +852,10 @@ def session_aliases_path() -> Path:
     return ui_state_dir() / "session_aliases.json"
 
 
+def session_work_dir_overrides_path() -> Path:
+    return ui_state_dir() / "session_work_dirs.json"
+
+
 def extract_session_id_from_rollout(path: str) -> str | None:
     match = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", path)
     return match.group(1) if match else None
@@ -1023,6 +1033,57 @@ def save_session_aliases(aliases: dict[str, str]) -> None:
     path = session_aliases_path()
     payload = {"aliases": aliases, "updated_at": datetime.now().astimezone().isoformat()}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_session_work_dir_overrides() -> dict[str, str]:
+    path = session_work_dir_overrides_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    mappings = data.get("work_dirs", {})
+    if not isinstance(mappings, dict):
+        return {}
+    cleaned: dict[str, str] = {}
+    for session_id, raw_path in mappings.items():
+        session_key = str(session_id).strip()
+        path_text = str(raw_path).strip()
+        if session_key and path_text:
+            cleaned[session_key] = path_text
+    return cleaned
+
+
+def save_session_work_dir_overrides(mappings: dict[str, str]) -> None:
+    path = session_work_dir_overrides_path()
+    payload = {"work_dirs": mappings, "updated_at": datetime.now().astimezone().isoformat()}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def session_cwd_from_path(path: Path | None) -> str:
+    if not path or not path.exists():
+        return ""
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = item.get("payload", {})
+                item_type = item.get("type")
+                if item_type in {"session_meta", "turn_context"} and isinstance(payload, dict):
+                    cwd = str(payload.get("cwd") or "").strip()
+                    if cwd:
+                        return cwd
+    except OSError:
+        return ""
+    return ""
+
+
+def load_session_cwd(codex_home: Path, session_id: str) -> str:
+    return session_cwd_from_path(find_session_file(codex_home, session_id))
 
 
 def apply_session_alias(session_id: str, thread_name: str, aliases: dict[str, str] | None = None) -> str:
@@ -1372,4 +1433,3 @@ def load_conversation_from_path(path: Path | None) -> list[ChatMessage]:
                 )
             )
     return messages
-

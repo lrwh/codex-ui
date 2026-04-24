@@ -179,7 +179,9 @@ class WindowAccountMixin:
 
     def apply_runtime_config(self, input_method_changed: bool = False) -> None:
                 self.codex_auth_path = resolve_codex_auth_path(self.config)
-                self.work_dir_label.setText(str(self.config.work_dir))
+                if not self.active_session_id and not self.new_session_work_dir_overridden:
+                    self.new_session_work_dir = self.config.work_dir
+                self.update_work_dir_label()
                 self.update_permission_selector()
                 self.refresh_account_panel()
                 if input_method_changed:

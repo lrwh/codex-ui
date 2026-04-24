@@ -78,6 +78,7 @@ class MainWindow(
                 )
                 self.pinned_session_ids = load_pinned_session_ids()
                 self.session_aliases = load_session_aliases()
+                self.session_work_dir_overrides = load_session_work_dir_overrides()
                 self.session_scope = "all"
                 self.session_page_size = 60
                 self.visible_session_limit = self.session_page_size
@@ -104,6 +105,8 @@ class MainWindow(
                 self.last_attachments: list[AttachmentInfo] = []
                 self.pending_attachments: list[AttachmentInfo] = []
                 self.last_error = ""
+                self.new_session_work_dir = self.config.work_dir
+                self.new_session_work_dir_overridden = False
                 self.prompt_templates = [
                     ("代码评审", "请审查当前改动，优先指出 bug、回归风险、边界条件和缺失测试。"),
                     ("修复问题", "请先定位根因，再直接修改代码修复问题，并说明验证结果。"),
@@ -112,7 +115,7 @@ class MainWindow(
                     ("解释代码", "请结合当前仓库上下文解释这段代码的作用、调用链和关键设计点。"),
                 ]
 
-                self.setWindowTitle("codex-ui")
+                self.setWindowTitle("Codex for Linux")
                 icon = load_app_icon()
                 if icon is not None and not icon.isNull():
                     self.setWindowIcon(icon)
@@ -136,6 +139,7 @@ class MainWindow(
                 self.load_active_session(scroll_to_top=False)
                 self.setup_shortcuts()
                 self.apply_styles()
+                self.update_work_dir_label()
 
                 self.account_timer = QTimer(self)
                 self.account_timer.timeout.connect(self.check_account_change)

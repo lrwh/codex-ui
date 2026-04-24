@@ -59,12 +59,20 @@ class CodexWorker(QThread):
     failed = Signal(str)
     finished_ok = Signal()
 
-    def __init__(self, config: AppConfig, session_id: str | None, prompt: str, image_paths: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        session_id: str | None,
+        prompt: str,
+        image_paths: list[str] | None = None,
+        work_dir: Path | None = None,
+    ) -> None:
         super().__init__()
         self.config = config
         self.session_id = session_id
         self.prompt = prompt
         self.image_paths = image_paths or []
+        self.work_dir = work_dir or config.work_dir
         self.proc: subprocess.Popen[str] | None = None
 
     def stop(self) -> None:
@@ -106,15 +114,15 @@ class CodexWorker(QThread):
             args.extend(["-m", self.config.model])
         if self.config.model_reasoning_effort:
             args.extend(["-c", f'model_reasoning_effort="{self.config.model_reasoning_effort}"'])
-        for image_path in self.image_paths:
-            args.extend(["-i", image_path])
-        if not self.session_id:
-            args.extend(["-C", str(self.config.work_dir)])
         if self.session_id:
             args.append("resume")
-        if self.session_id:
+            for image_path in self.image_paths:
+                args.extend(["-i", image_path])
             args.extend([self.session_id, self.prompt])
         else:
+            for image_path in self.image_paths:
+                args.extend(["-i", image_path])
+            args.extend(["-C", str(self.work_dir)])
             args.append(self.prompt)
 
         try:
@@ -123,7 +131,7 @@ class CodexWorker(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=self.config.work_dir,
+                cwd=self.work_dir,
             )
         except OSError as exc:
             self.failed.emit(str(exc))
@@ -259,5 +267,3 @@ class AccountActionWorker(QThread):
             self.failed.emit(error)
             return
         self.finished_ok.emit(self.success_message)
-
-
