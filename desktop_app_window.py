@@ -107,6 +107,9 @@ class MainWindow(
                 self.last_error = ""
                 self.new_session_work_dir = self.config.work_dir
                 self.new_session_work_dir_overridden = False
+                self.status_clear_timer = QTimer(self)
+                self.status_clear_timer.setSingleShot(True)
+                self.status_clear_timer.timeout.connect(self.clear_status_text)
                 self.prompt_templates = [
                     ("代码评审", "请审查当前改动，优先指出 bug、回归风险、边界条件和缺失测试。"),
                     ("修复问题", "请先定位根因，再直接修改代码修复问题，并说明验证结果。"),

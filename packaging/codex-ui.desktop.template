@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=codex-ui
-GenericName=Codex Desktop Client
-Comment=Codex 桌面客户端
+Name=Codex for Linux
+GenericName=Codex Linux Desktop Client
+Comment=Codex for Linux 桌面客户端
 Exec=__APPDIR__/run-codex-ui.sh
 Icon=codex-ui
 Terminal=false

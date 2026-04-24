@@ -221,13 +221,13 @@ class WindowLayoutMixin:
                 header_row = QHBoxLayout()
                 header_row.setContentsMargins(0, 0, 0, 0)
                 header_row.setSpacing(10)
-                header_row.addWidget(self.header_title, 0)
                 header_row.addWidget(self.work_dir_label, 0)
                 header_row.addLayout(session_action_row, 0)
                 header_row.addStretch(1)
                 header_row.addWidget(self.pin_button, 0)
                 header_row.addWidget(self.header_meta, 0)
                 header_row.addWidget(self.header_status, 0, Qt.AlignRight)
+                self.header_title_row.insertWidget(1, self.header_title, 0)
                 self.header_card.layout().addLayout(header_row)
                 self.resume_command = QLineEdit()
                 self.resume_command.setObjectName("resumeCommand")
@@ -432,7 +432,17 @@ class WindowLayoutMixin:
                 else:
                     layout.setContentsMargins(14, 12, 14, 12)
                     layout.setSpacing(8)
-                if object_name == "inputCard":
+                if object_name == "headerCard":
+                    title_row = QHBoxLayout()
+                    title_row.setContentsMargins(0, 0, 0, 0)
+                    title_row.setSpacing(10)
+                    label = QLabel(title)
+                    label.setObjectName("cardTitle")
+                    self.header_title_row = title_row
+                    title_row.addWidget(label, 0)
+                    title_row.addStretch(1)
+                    layout.addLayout(title_row)
+                elif object_name == "inputCard":
                     title_row = QHBoxLayout()
                     title_row.setContentsMargins(0, 0, 0, 0)
                     title_row.setSpacing(10)

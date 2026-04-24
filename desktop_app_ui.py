@@ -502,6 +502,42 @@ class ComposerInput(QPlainTextEdit):
         self.setAcceptDrops(False)
         self.setTabChangesFocus(False)
 
+    def _reset_input_method_state(self) -> None:
+        input_method = QGuiApplication.inputMethod()
+        if input_method is None:
+            return
+        input_method.commit()
+        input_method.reset()
+
+    def _clamp_cursor_position(self) -> None:
+        cursor = self.textCursor()
+        text_length = len(self.toPlainText())
+        position = max(0, min(cursor.position(), text_length))
+        anchor = max(0, min(cursor.anchor(), text_length))
+        cursor.setPosition(anchor)
+        if position != anchor:
+            cursor.setPosition(position, QTextCursor.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def focusInEvent(self, event) -> None:
+        self._reset_input_method_state()
+        super().focusInEvent(event)
+        self._clamp_cursor_position()
+
+    def focusOutEvent(self, event) -> None:
+        self._reset_input_method_state()
+        super().focusOutEvent(event)
+
+    def setPlainText(self, text: str) -> None:
+        self._reset_input_method_state()
+        super().setPlainText(text)
+        self._clamp_cursor_position()
+
+    def clear(self) -> None:
+        self._reset_input_method_state()
+        super().clear()
+        self._clamp_cursor_position()
+
     def canInsertFromMimeData(self, source) -> bool:
         if self._extract_local_file_paths(source):
             return True
@@ -545,4 +581,3 @@ class ComposerInput(QPlainTextEdit):
             if local_path:
                 paths.append(local_path)
         return paths
-

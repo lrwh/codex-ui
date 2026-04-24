@@ -4,6 +4,8 @@
 
 ## 2026-04-24
 
+- 12:03 提交代码：新增 package_deb.sh；更新 desktop_app_ui.py, desktop_app_window.py, desktop_app_window_common.py, desktop_app_window_conversation.py 等 6 项
+
 - 支持输入框直接从剪贴板粘贴图片，并自动落盘为图片附件。
 - 支持在输入框里直接粘贴文件管理器复制的本地文件，作为 `.log`、`.md`、图片等附件加入当前输入。
 - 修复已有会话 `resume + 图片附件` 时的命令参数顺序问题，避免出现 `No prompt provided`。

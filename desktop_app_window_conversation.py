@@ -526,6 +526,23 @@ class WindowConversationMixin:
                     self.input_box.setFocus()
                 return True
 
+    def handle_local_workflow_command(self, prompt: str, attachments: list[AttachmentInfo]) -> bool:
+                if attachments:
+                    return False
+                stripped = (prompt or "").strip()
+                if stripped != "提交代码":
+                    return False
+                success, message = self.run_commit_workflow()
+                self.input_box.clear()
+                if self.input_box.isEnabled():
+                    self.input_box.setFocus()
+                if success:
+                    self.set_status(message, "idle")
+                else:
+                    self.set_status("提交失败", "idle")
+                    QMessageBox.critical(self, "Codex for Linux", message)
+                return True
+
     def new_session(self) -> None:
                 self.active_session_id = None
                 self.new_session_work_dir = self.config.work_dir
@@ -544,6 +561,8 @@ class WindowConversationMixin:
                 if not prompt and not attachments:
                     return
                 if prompt and self.handle_composer_command(prompt):
+                    return
+                if prompt and self.handle_local_workflow_command(prompt, attachments):
                     return
                 missing_paths = [item.path for item in attachments if not Path(item.path).exists()]
                 if missing_paths:
