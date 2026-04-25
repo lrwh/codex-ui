@@ -1,6 +1,6 @@
 # Codex for Linux
 
-`Codex for Linux` 是一个非浏览器形态的 Codex Linux 桌面客户端，基于本机已安装的 `codex` / `codex-auth` 工作，直接读取本地 `~/.codex` 数据，提供会话浏览、续聊、多账号管理、附件输入和桌面打包能力。
+`Codex for Linux` 是一个非浏览器形态的 Codex Linux 桌面客户端，基于本机已安装的 `codex` / `codex-auth` 工作，直接读取本地 `~/.codex` 数据，提供会话浏览、续聊、多账号管理、附件输入和桌面安装能力。
 
 ![Codex for Linux 预览](./codex.png)
 
@@ -25,7 +25,6 @@
 - 图片续聊：修复了 `resume + 图片附件` 的发送参数顺序，已有会话可直接带图继续提问。
 - 状态摘要：底部展示 token 用量，并自动转换为 `K` / `M` / `B` 等可读单位。
 - 本地设置：支持工作目录、权限模式、Codex 路径和输入法策略配置。
-- 桌面发布：支持 PyInstaller 打包，并可安装 `.desktop` 启动入口和应用图标。
 
 ## 目录结构
 
@@ -39,12 +38,13 @@
 ├── capture_desktop.py              # 离屏截图辅助脚本
 ├── codex-ui.spec                   # PyInstaller 配置
 ├── packaging/                      # 桌面入口、图标和启动脚本
-├── scripts/package_desktop.sh      # 桌面版打包脚本
+├── scripts/                        # 打包脚本
+├── build.md                        # 构建与打包说明
 ├── README.md
 └── TASKS.md
 ```
 
-## 预置要求
+## 安装前提
 
 运行前需要本机已经具备：
 
@@ -59,12 +59,58 @@
 python3 -m pip install PySide6 PyInstaller
 ```
 
-## 直接运行
+## 安装
+
+### 方式一：安装 `.deb` 包
+
+如果你已经拿到构建好的安装包，可以直接执行：
+
+```bash
+sudo dpkg -i codex-ui_0.1.0_amd64.deb
+```
+
+安装后会写入：
+
+- `/opt/codex-ui`
+- `/usr/share/applications/codex-ui.desktop`
+- `/usr/share/icons/hicolor/scalable/apps/codex-ui.svg`
+
+### 方式二：使用目录包
+
+如果你拿到的是发布目录或 `tar.gz` 包，可以解压后直接运行：
+
+```bash
+tar -xzf codex-ui-linux-x86_64.tar.gz
+cd codex-ui-linux-x86_64
+./run-codex-ui.sh
+```
+
+如果希望在当前用户桌面环境中注册启动入口：
+
+```bash
+./install-desktop-entry.sh
+```
+
+这会写入：
+
+- `~/.local/share/applications/codex-ui.desktop`
+- `~/.local/share/icons/hicolor/scalable/apps/codex-ui.svg`
+
+## 启动方式
+
+### 从源码启动
 
 ```bash
 cd /home/liurui/code/codex-ui
 python3 desktop_app.py
 ```
+
+### 从安装包启动
+
+安装 `.deb` 后，可以通过以下任一方式启动：
+
+- 在应用菜单中搜索 `Codex for Linux`
+- 或在终端执行 `/opt/codex-ui/run-codex-ui.sh`
 
 首次启动会自动生成本地配置：
 
@@ -72,38 +118,11 @@ python3 desktop_app.py
 ~/.config/codex-ui/config.json
 ```
 
-## 桌面版打包
+## 构建与打包
 
-```bash
-cd /home/liurui/code/codex-ui
-bash scripts/package_desktop.sh
-```
+构建源码包、桌面目录包、`tar.gz` 和 `.deb` 的方式已移到：
 
-打包完成后会生成：
-
-```text
-release/codex-ui-linux-x86_64/
-release/codex-ui-linux-x86_64.tar.gz
-```
-
-解压后的用户可以直接运行：
-
-```bash
-cd codex-ui-linux-x86_64
-./run-codex-ui.sh
-```
-
-安装桌面启动入口：
-
-```bash
-cd codex-ui-linux-x86_64
-./install-desktop-entry.sh
-```
-
-安装脚本会写入：
-
-- `~/.local/share/applications/codex-ui.desktop`
-- `~/.local/share/icons/hicolor/scalable/apps/codex-ui.svg`
+- [build.md](./build.md)
 
 ## 快捷键
 

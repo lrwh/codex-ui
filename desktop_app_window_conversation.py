@@ -159,8 +159,12 @@ class WindowConversationMixin:
     def is_current_session_busy(self) -> bool:
                 return self.current_request_key() in self.workers
 
+    def update_header_status_chip(self) -> None:
+                self.header_status.setText("running" if self.is_current_session_busy() else "idle")
+
     def update_request_controls(self) -> None:
                 busy = self.is_current_session_busy()
+                self.update_header_status_chip()
                 self.send_button.setEnabled(not busy)
                 self.stop_button.setVisible(busy)
                 self.stop_button.setEnabled(busy)
@@ -252,6 +256,7 @@ class WindowConversationMixin:
                     return
                 self.active_session_id = session_id
                 self.refresh_session_list()
+                self.update_work_dir_label()
                 self.load_active_session(scroll_to_top=False)
 
     def current_session_messages(self) -> list[ChatMessage]:
@@ -387,6 +392,7 @@ class WindowConversationMixin:
                 self.clear_messages()
                 if not self.is_current_session_busy():
                     self.set_request_ready_feedback()
+                self.clear_session_unread(self.active_session_id)
                 if not self.active_session_id:
                     if self.sessions:
                         self.header_title.setText("新会话")
@@ -408,6 +414,7 @@ class WindowConversationMixin:
                 self.header_title.setText(session.thread_name if session else self.active_session_id[:8])
                 self.header_meta.setText(f"{session.updated_at if session else '-'} · {self.active_session_id[:8]}")
                 self.resume_command.setText(f"codex resume {self.active_session_id}")
+                self.update_work_dir_label()
                 self.update_pin_button()
                 self.update_session_action_buttons()
                 messages = self.current_session_messages()
@@ -611,6 +618,7 @@ class WindowConversationMixin:
                 worker.finished_ok.connect(lambda key=request_key: self.on_finished_ok(key))
                 worker.finished.connect(self.on_worker_thread_finished)
                 worker.start()
+                self.refresh_session_list()
 
     def on_session_started(self, request_key: str, session_id: str) -> None:
                 if session_id:
@@ -631,14 +639,20 @@ class WindowConversationMixin:
                     self.mark_session_updated(session_id)
                     self.update_work_dir_label()
                     self.update_request_controls()
+                    self.refresh_session_list()
 
     def on_assistant_message(self, request_key: str, text: str) -> None:
                 request_key = self.resolve_request_key(request_key)
                 self.finalize_assistant_message(request_key, text)
                 self.mark_session_updated(request_key if request_key != "__new__" else self.active_session_id)
+                if request_key != self.current_request_key():
+                    self.mark_session_unread(request_key)
 
     def on_assistant_delta(self, request_key: str, text: str) -> None:
+                resolved_key = self.resolve_request_key(request_key)
                 self.append_assistant_delta(request_key, text)
+                if resolved_key != self.current_request_key():
+                    self.mark_session_unread(resolved_key)
 
     def on_usage_updated(self, request_key: str, usage: dict) -> None:
                 request_key = self.resolve_request_key(request_key)
@@ -674,6 +688,8 @@ class WindowConversationMixin:
                     self.set_request_ready_feedback()
                     self.load_active_session(scroll_to_top=False)
                 self.bind_session_to_active_account(request_key if request_key != "__new__" else self.active_session_id)
+                if request_key != self.current_request_key():
+                    self.mark_session_unread(request_key)
                 self.set_status("", "idle")
 
     def on_worker_thread_finished(self) -> None:
@@ -690,6 +706,7 @@ class WindowConversationMixin:
                     self.worker = None
                 worker.deleteLater()
                 self.update_request_controls()
+                self.refresh_session_list()
                 if was_stopping:
                     self.set_status("已停止当前请求", "idle")
 

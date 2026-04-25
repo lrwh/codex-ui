@@ -244,7 +244,5 @@ class WindowCommonMixin:
                 self.status_label.setProperty("tone", tone if compact else "")
                 self.status_label.style().unpolish(self.status_label)
                 self.status_label.style().polish(self.status_label)
-                if chip:
-                    self.header_status.setText(chip)
                 if compact:
                     self.status_clear_timer.start(5000)

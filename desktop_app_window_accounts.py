@@ -262,6 +262,9 @@ class WindowAccountMixin:
                             continue
                         session.updated_at_raw = latest_raw
                         session.updated_at = latest_label
+                self.sessions.sort(key=lambda x: session_sort_key(x.updated_at_raw), reverse=True)
+                self.filtered_sessions.sort(key=lambda x: session_sort_key(x.updated_at_raw), reverse=True)
+                self.refresh_session_list()
 
     def check_account_change(self) -> None:
                 if self.has_running_worker():

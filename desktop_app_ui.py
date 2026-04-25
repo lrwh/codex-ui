@@ -410,7 +410,14 @@ class SessionGroupHeader(QFrame):
 
 
 class SessionListItem(QFrame):
-    def __init__(self, session: SessionSummary, selected: bool, query: str = "") -> None:
+    def __init__(
+        self,
+        session: SessionSummary,
+        selected: bool,
+        query: str = "",
+        running: bool = False,
+        unread: bool = False,
+    ) -> None:
         super().__init__()
         self.setObjectName("sessionCard")
         self.setProperty("selected", selected)
@@ -426,6 +433,7 @@ class SessionListItem(QFrame):
         dot = QLabel("●")
         dot.setObjectName("sessionDot")
         dot.setProperty("selected", selected)
+        dot.setProperty("state", "running" if running else ("unread" if unread else ""))
 
         short_id = session.session_id[:8]
         title = QLabel(highlight_match(truncate_text(session.thread_name, 18), query))
@@ -435,8 +443,12 @@ class SessionListItem(QFrame):
 
         top_row.addWidget(dot, 0, Qt.AlignTop)
         top_row.addWidget(title, 1)
-
-        meta = QLabel(f"{session.updated_at} · {highlight_match(short_id, query)}")
+        meta_prefix = ""
+        if running:
+            meta_prefix = "<span style='color:#225e52;font-weight:700;'>运行中</span> · "
+        elif unread:
+            meta_prefix = "<span style='color:#b26a2e;font-weight:700;'>未读</span> · "
+        meta = QLabel(f"{meta_prefix}{session.updated_at} · {highlight_match(short_id, query)}")
         meta.setObjectName("sessionMeta")
         meta.setTextFormat(Qt.RichText)
 

@@ -679,6 +679,12 @@ class WindowLayoutMixin:
                     QLabel#sessionDot[selected="true"] {
                       color: #2f7b68;
                     }
+                    QLabel#sessionDot[state="running"] {
+                      color: #2f7b68;
+                    }
+                    QLabel#sessionDot[state="unread"] {
+                      color: #c98235;
+                    }
                     QFrame#headerCard, QFrame#statusBar, QFrame#conversationPanel {
                       background: #fffdfa;
                       border: 1px solid #eadfce;

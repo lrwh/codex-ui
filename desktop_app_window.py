@@ -93,6 +93,7 @@ class MainWindow(
                 self.worker: CodexWorker | None = None
                 self.workers: dict[str, CodexWorker] = {}
                 self.worker_key_aliases: dict[str, str] = {}
+                self.session_unread_ids: set[str] = set()
                 self.account_worker: AccountActionWorker | None = None
                 self.account_dialog: AccountDialog | None = None
                 self.streaming_bubble: MessageBubble | None = None

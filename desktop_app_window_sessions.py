@@ -54,6 +54,26 @@ from desktop_app_workers import *
 from desktop_app_ui import *
 
 class WindowSessionMixin:
+    def is_session_running(self, session_id: str | None) -> bool:
+                if not session_id:
+                    return False
+                worker = self.workers.get(session_id)
+                return bool(worker and worker.isRunning())
+
+    def mark_session_unread(self, session_id: str | None) -> None:
+                if not session_id or session_id == self.active_session_id:
+                    return
+                if session_id in self.session_unread_ids:
+                    return
+                self.session_unread_ids.add(session_id)
+                self.refresh_session_list()
+
+    def clear_session_unread(self, session_id: str | None) -> None:
+                if not session_id or session_id not in self.session_unread_ids:
+                    return
+                self.session_unread_ids.discard(session_id)
+                self.refresh_session_list()
+
     def on_search(self, text: str) -> None:
                 self.apply_session_filters()
 
@@ -129,11 +149,26 @@ class WindowSessionMixin:
 
                         item = QListWidgetItem()
                         item.setData(Qt.UserRole, session.session_id)
-                        preview_widget = SessionListItem(session, False, query)
+                        preview_widget = SessionListItem(
+                            session,
+                            False,
+                            query,
+                            running=self.is_session_running(session.session_id),
+                            unread=session.session_id in self.session_unread_ids,
+                        )
                         item.setSizeHint(preview_widget.sizeHint())
                         self.session_list.addItem(item)
                         selected = session.session_id == self.active_session_id
-                        self.session_list.setItemWidget(item, SessionListItem(session, selected, query))
+                        self.session_list.setItemWidget(
+                            item,
+                            SessionListItem(
+                                session,
+                                selected,
+                                query,
+                                running=self.is_session_running(session.session_id),
+                                unread=session.session_id in self.session_unread_ids,
+                            ),
+                        )
                         if selected:
                             current_row = self.session_list.row(item)
 
