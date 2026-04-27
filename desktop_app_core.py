@@ -225,7 +225,14 @@ CONVERSATION_RENDER_CHUNK_SIZE = 120
 
 def app_base_dir() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            return Path(meipass).resolve()
+        exe_dir = Path(sys.executable).resolve().parent
+        internal_dir = exe_dir / "_internal"
+        if internal_dir.is_dir():
+            return internal_dir
+        return exe_dir
     return Path(__file__).resolve().parent
 
 
