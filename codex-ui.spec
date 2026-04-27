@@ -1,10 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+import PySide6
+
+
+PYSIDE_DIR = Path(PySide6.__file__).resolve().parent
+
+
+def plugin_binaries(relative_dir):
+    source_dir = PYSIDE_DIR / relative_dir
+    return [
+        (str(path), f"PySide6/{relative_dir}")
+        for path in source_dir.glob("*")
+        if path.is_file()
+    ]
+
 
 a = Analysis(
     ["desktop_app.py"],
     pathex=[],
-    binaries=[],
+    binaries=[
+        *plugin_binaries("Qt/plugins/platforms"),
+        *plugin_binaries("Qt/plugins/platformthemes"),
+        *plugin_binaries("Qt/plugins/platforminputcontexts"),
+    ],
     datas=[("packaging/codex-ui.svg", "."), ("VERSION", ".")],
     hiddenimports=[],
     hookspath=[],
