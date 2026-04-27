@@ -5,7 +5,7 @@ a = Analysis(
     ["desktop_app.py"],
     pathex=[],
     binaries=[],
-    datas=[("packaging/codex-ui.svg", ".")],
+    datas=[("packaging/codex-ui.svg", "."), ("VERSION", ".")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

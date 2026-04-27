@@ -718,4 +718,6 @@ class WindowConversationMixin:
                 if self.account_worker is not None and self.account_worker.isRunning():
                     self.account_worker.stop()
                     self.account_worker.wait(3000)
+                if self.update_check_worker is not None and self.update_check_worker.isRunning():
+                    self.update_check_worker.wait(3000)
                 event.accept()

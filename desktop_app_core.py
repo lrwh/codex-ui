@@ -121,6 +121,24 @@ class LocalAccountInfo:
     is_active: bool
 
 
+@dataclass
+class ReleaseAssetInfo:
+    name: str
+    download_url: str
+    size: int
+
+
+@dataclass
+class ReleaseInfo:
+    tag_name: str
+    version: str
+    title: str
+    html_url: str
+    body: str
+    published_at: str
+    assets: list[ReleaseAssetInfo]
+
+
 DEFAULT_MODEL_CHOICES = ["", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"]
 DEFAULT_REASONING_EFFORT_CHOICES = [
     ("默认", ""),
@@ -199,6 +217,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 TEXT_ATTACHMENT_SUFFIXES = {".log", ".md", ".markdown"}
 TEXT_ATTACHMENT_CHAR_LIMIT = 50000
 APP_ICON_NAME = "codex-ui.svg"
+APP_VERSION_FILE = "VERSION"
+APP_RELEASE_REPO = "lrwh/codex-ui"
 INITIAL_CONVERSATION_RENDER_LIMIT = 120
 CONVERSATION_RENDER_CHUNK_SIZE = 120
 
@@ -211,6 +231,42 @@ def app_base_dir() -> Path:
 
 def app_resource_path(name: str) -> Path:
     return app_base_dir() / name
+
+
+def load_app_version() -> str:
+    version_path = app_resource_path(APP_VERSION_FILE)
+    try:
+        version = version_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        version = ""
+    return version or "0.0.0"
+
+
+def normalize_release_version(tag_name: str) -> str:
+    return str(tag_name or "").strip().lstrip("vV")
+
+
+def version_key(value: str) -> tuple[int, ...]:
+    normalized = normalize_release_version(value)
+    if not normalized:
+        return (0,)
+    values: list[int] = []
+    for chunk in normalized.split("."):
+        match = re.match(r"(\d+)", chunk)
+        values.append(int(match.group(1)) if match else 0)
+    return tuple(values)
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    return version_key(latest) > version_key(current)
+
+
+def preferred_release_asset(release: ReleaseInfo) -> ReleaseAssetInfo | None:
+    for suffix in (".deb", ".tar.gz"):
+        for asset in release.assets:
+            if asset.name.endswith(suffix):
+                return asset
+    return release.assets[0] if release.assets else None
 
 
 def load_app_icon() -> QIcon | None:

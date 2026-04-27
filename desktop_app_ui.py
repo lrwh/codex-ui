@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from desktop_app_core import *
+from desktop_app_workers import ReleaseCheckWorker, ReleaseDownloadWorker
 
 class AccountDialog(QDialog):
     def __init__(self, window: "MainWindow") -> None:
@@ -297,6 +299,9 @@ class SettingsDialog(QDialog):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self.window = window
+        self.latest_release: ReleaseInfo | None = None
+        self.release_check_worker: ReleaseCheckWorker | None = None
+        self.release_download_worker: ReleaseDownloadWorker | None = None
         self.setObjectName("accountDialog")
         self.setWindowTitle("设置")
         self.setModal(True)
@@ -312,6 +317,34 @@ class SettingsDialog(QDialog):
         subtitle.setObjectName("pageSubtitle")
         root.addWidget(title)
         root.addWidget(subtitle)
+
+        version_row = QHBoxLayout()
+        version_row.setContentsMargins(0, 0, 0, 0)
+        version_row.setSpacing(8)
+        self.version_label = QLabel(f"当前版本 · v{window.app_version}")
+        self.version_label.setObjectName("cardMetaStrong")
+        self.check_update_button = QPushButton("检查更新")
+        self.check_update_button.setObjectName("scopeButton")
+        self.check_update_button.clicked.connect(self.on_check_update)
+        self.download_update_button = QPushButton("下载更新")
+        self.download_update_button.setObjectName("scopeButton")
+        self.download_update_button.setEnabled(False)
+        self.download_update_button.clicked.connect(self.on_download_update)
+        version_row.addWidget(self.version_label, 0)
+        version_row.addStretch(1)
+        version_row.addWidget(self.check_update_button, 0)
+        version_row.addWidget(self.download_update_button, 0)
+        root.addLayout(version_row)
+
+        self.update_hint = QLabel("未检查更新")
+        self.update_hint.setObjectName("sidebarHint")
+        root.addWidget(self.update_hint)
+        if window.update_check_worker is not None:
+            self.update_hint.setText("正在后台检查更新…")
+        elif window.latest_release and is_newer_version(window.latest_release.version, window.app_version):
+            self.latest_release = window.latest_release
+            self.update_hint.setText(f"发现新版本 v{window.latest_release.version}，可下载更新")
+            self.download_update_button.setEnabled(True)
 
         self.work_dir_input = QLineEdit(str(window.config.work_dir))
         self.work_dir_input.setObjectName("searchInput")
@@ -371,6 +404,102 @@ class SettingsDialog(QDialog):
         action_row.addWidget(cancel, 0)
         action_row.addWidget(save, 0)
         root.addLayout(action_row)
+
+    def refresh_update_buttons(self) -> None:
+        busy = self.release_check_worker is not None or self.release_download_worker is not None
+        self.check_update_button.setEnabled(not busy)
+        self.download_update_button.setEnabled((not busy) and self.latest_release is not None)
+
+    def on_check_update(self) -> None:
+        if self.release_check_worker is not None or self.release_download_worker is not None:
+            return
+        self.latest_release = None
+        self.update_hint.setText("正在检查更新…")
+        self.release_check_worker = ReleaseCheckWorker(APP_RELEASE_REPO)
+        self.release_check_worker.finished_ok.connect(self.on_release_check_finished)
+        self.release_check_worker.failed.connect(self.on_release_check_failed)
+        self.release_check_worker.finished.connect(self.on_release_check_thread_finished)
+        self.refresh_update_buttons()
+        self.release_check_worker.start()
+
+    def on_release_check_finished(self, release: ReleaseInfo) -> None:
+        current = self.window.app_version
+        latest = release.version or normalize_release_version(release.tag_name)
+        if is_newer_version(latest, current):
+            self.latest_release = release
+            self.window.latest_release = release
+            self.window.update_version_label()
+            self.update_hint.setText(f"发现新版本 v{latest}，可下载更新")
+        else:
+            self.latest_release = None
+            self.window.latest_release = None
+            self.window.update_version_label()
+            self.update_hint.setText(f"当前已是最新版本 v{current}")
+        self.refresh_update_buttons()
+
+    def on_release_check_failed(self, error: str) -> None:
+        self.latest_release = None
+        self.update_hint.setText("检查更新失败")
+        QMessageBox.critical(self, "Codex for Linux", f"检查更新失败：\n{error}")
+        self.refresh_update_buttons()
+
+    def on_release_check_thread_finished(self) -> None:
+        if self.release_check_worker is not None:
+            self.release_check_worker.deleteLater()
+            self.release_check_worker = None
+        self.refresh_update_buttons()
+
+    def on_download_update(self) -> None:
+        if self.latest_release is None or self.release_check_worker is not None or self.release_download_worker is not None:
+            return
+        asset = preferred_release_asset(self.latest_release)
+        if asset is None:
+            QMessageBox.critical(self, "Codex for Linux", "当前最新版本没有可下载的发布文件。")
+            return
+        self.update_hint.setText(f"正在下载 {asset.name}…")
+        self.release_download_worker = ReleaseDownloadWorker(asset, Path.home() / "Downloads" / "codex-ui-updates")
+        self.release_download_worker.finished_ok.connect(self.on_release_download_finished)
+        self.release_download_worker.failed.connect(self.on_release_download_failed)
+        self.release_download_worker.finished.connect(self.on_release_download_thread_finished)
+        self.refresh_update_buttons()
+        self.release_download_worker.start()
+
+    def on_release_download_finished(self, path: str) -> None:
+        file_path = Path(path)
+        self.update_hint.setText(f"已下载更新包：{file_path.name}")
+        if file_path.suffix == ".deb":
+            install_cmd = f"sudo dpkg -i {shlex.quote(str(file_path))}"
+            QGuiApplication.clipboard().setText(install_cmd)
+            QMessageBox.information(
+                self,
+                "Codex for Linux",
+                f"更新包已下载到：\n{file_path}\n\n安装命令已复制到剪贴板：\n{install_cmd}",
+            )
+        else:
+            QMessageBox.information(self, "Codex for Linux", f"更新包已下载到：\n{file_path}")
+        opener = shutil.which("xdg-open")
+        if opener:
+            try:
+                subprocess.Popen(
+                    [opener, str(file_path.parent)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError:
+                pass
+        self.refresh_update_buttons()
+
+    def on_release_download_failed(self, error: str) -> None:
+        self.update_hint.setText("下载更新失败")
+        QMessageBox.critical(self, "Codex for Linux", f"下载更新失败：\n{error}")
+        self.refresh_update_buttons()
+
+    def on_release_download_thread_finished(self) -> None:
+        if self.release_download_worker is not None:
+            self.release_download_worker.deleteLater()
+            self.release_download_worker = None
+        self.refresh_update_buttons()
 
     def on_save(self) -> None:
         work_dir = Path(self.work_dir_input.text().strip()).expanduser()

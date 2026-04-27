@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from queue import Empty, Queue
 from threading import Thread
 from datetime import datetime, timedelta
@@ -267,3 +269,90 @@ class AccountActionWorker(QThread):
             self.failed.emit(error)
             return
         self.finished_ok.emit(self.success_message)
+
+
+class ReleaseCheckWorker(QThread):
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, repo: str) -> None:
+        super().__init__()
+        self.repo = repo
+
+    def run(self) -> None:
+        request = urllib.request.Request(
+            f"https://github.com/{self.repo}/releases/latest",
+            headers={"User-Agent": "CodexForLinux"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                final_url = response.geturl()
+        except urllib.error.HTTPError as exc:
+            self.failed.emit(f"HTTP {exc.code}: {exc.reason}")
+            return
+        except urllib.error.URLError as exc:
+            self.failed.emit(str(exc))
+            return
+        except OSError as exc:
+            self.failed.emit(str(exc))
+            return
+
+        tag_name = final_url.rstrip("/").split("/")[-1]
+        version = normalize_release_version(tag_name)
+        if not version:
+            self.failed.emit("未能识别最新版本号。")
+            return
+        assets = [
+            ReleaseAssetInfo(
+                name=f"codex-ui_{version}_amd64.deb",
+                download_url=f"https://github.com/{self.repo}/releases/latest/download/codex-ui_{version}_amd64.deb",
+                size=0,
+            ),
+            ReleaseAssetInfo(
+                name="codex-ui-linux-x86_64.tar.gz",
+                download_url=f"https://github.com/{self.repo}/releases/latest/download/codex-ui-linux-x86_64.tar.gz",
+                size=0,
+            ),
+        ]
+        release = ReleaseInfo(
+            tag_name=tag_name,
+            version=version,
+            title=tag_name,
+            html_url=f"https://github.com/{self.repo}/releases/tag/{tag_name}",
+            body="",
+            published_at="",
+            assets=assets,
+        )
+        self.finished_ok.emit(release)
+
+
+class ReleaseDownloadWorker(QThread):
+    finished_ok = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, asset: ReleaseAssetInfo, output_dir: Path) -> None:
+        super().__init__()
+        self.asset = asset
+        self.output_dir = output_dir
+
+    def run(self) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        target = self.output_dir / self.asset.name
+        request = urllib.request.Request(
+            self.asset.download_url,
+            headers={"User-Agent": "CodexForLinux"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 64)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+        except urllib.error.URLError as exc:
+            self.failed.emit(str(exc))
+            return
+        except OSError as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(str(target))

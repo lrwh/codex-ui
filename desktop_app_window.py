@@ -106,6 +106,9 @@ class MainWindow(
                 self.last_attachments: list[AttachmentInfo] = []
                 self.pending_attachments: list[AttachmentInfo] = []
                 self.last_error = ""
+                self.app_version = load_app_version()
+                self.latest_release: ReleaseInfo | None = None
+                self.update_check_worker: ReleaseCheckWorker | None = None
                 self.new_session_work_dir = self.config.work_dir
                 self.new_session_work_dir_overridden = False
                 self.status_clear_timer = QTimer(self)
@@ -144,7 +147,9 @@ class MainWindow(
                 self.setup_shortcuts()
                 self.apply_styles()
                 self.update_work_dir_label()
+                self.update_version_label()
 
                 self.account_timer = QTimer(self)
                 self.account_timer.timeout.connect(self.check_account_change)
                 self.account_timer.start(3000)
+                QTimer.singleShot(0, self.start_background_release_check)

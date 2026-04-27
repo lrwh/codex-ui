@@ -54,6 +54,41 @@ from desktop_app_workers import *
 from desktop_app_ui import *
 
 class WindowCommonMixin:
+    def update_version_label(self) -> None:
+                if not hasattr(self, "version_label"):
+                    return
+                text = f"v{self.app_version}"
+                tooltip = f"当前版本：v{self.app_version}"
+                if self.latest_release and is_newer_version(self.latest_release.version, self.app_version):
+                    text += " · 有更新"
+                    tooltip += f"\n最新版本：v{self.latest_release.version}"
+                self.version_label.setText(text)
+                self.version_label.setToolTip(tooltip)
+
+    def start_background_release_check(self) -> None:
+                if self.update_check_worker is not None:
+                    return
+                self.update_check_worker = ReleaseCheckWorker(APP_RELEASE_REPO)
+                self.update_check_worker.finished_ok.connect(self.on_background_release_check_finished)
+                self.update_check_worker.failed.connect(self.on_background_release_check_failed)
+                self.update_check_worker.finished.connect(self.on_background_release_check_thread_finished)
+                self.update_check_worker.start()
+
+    def on_background_release_check_finished(self, release: ReleaseInfo) -> None:
+                if is_newer_version(release.version, self.app_version):
+                    self.latest_release = release
+                else:
+                    self.latest_release = None
+                self.update_version_label()
+
+    def on_background_release_check_failed(self, _error: str) -> None:
+                self.update_version_label()
+
+    def on_background_release_check_thread_finished(self) -> None:
+                if self.update_check_worker is not None:
+                    self.update_check_worker.deleteLater()
+                    self.update_check_worker = None
+
     def run_commit_workflow(self) -> tuple[bool, str]:
                 work_dir = self.current_effective_work_dir()
                 repo = subprocess.run(

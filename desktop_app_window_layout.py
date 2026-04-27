@@ -89,10 +89,10 @@ class WindowLayoutMixin:
 
                 title = QLabel("Codex for Linux")
                 title.setObjectName("sidebarTitle")
-                meta = QLabel("Linux 桌面客户端")
-                meta.setObjectName("sidebarMeta")
+                self.version_label = QLabel(f"v{self.app_version}")
+                self.version_label.setObjectName("sidebarMeta")
                 brand_stack.addWidget(title)
-                brand_stack.addWidget(meta)
+                brand_stack.addWidget(self.version_label)
                 brand_row.addWidget(badge, 0, Qt.AlignTop)
                 brand_row.addLayout(brand_stack, 1)
 
