@@ -219,8 +219,10 @@ TEXT_ATTACHMENT_CHAR_LIMIT = 50000
 APP_ICON_NAME = "codex-ui.svg"
 APP_VERSION_FILE = "VERSION"
 APP_RELEASE_REPO = "lrwh/codex-ui"
-INITIAL_CONVERSATION_RENDER_LIMIT = 120
-CONVERSATION_RENDER_CHUNK_SIZE = 120
+INITIAL_CONVERSATION_RENDER_LIMIT = 80
+CONVERSATION_RENDER_CHUNK_SIZE = 80
+MESSAGE_RENDER_BATCH_SIZE = 24
+_MERGED_SESSION_CANDIDATE_CACHE: dict[str, dict[str, "SessionCandidate"]] = {}
 
 
 def app_base_dir() -> Path:
@@ -401,7 +403,7 @@ def render_inline_markdown(text: str) -> str:
         if code_text is not None:
             parts.append(
                 "<code style='background:#f3e8d8; color:#734d2b; padding:1px 6px; "
-                "border-radius:6px; font-family:\"JetBrains Mono\",\"Noto Sans Mono CJK SC\",monospace;'>"
+                "border-radius:6px; font-family:monospace;'>"
                 f"{html.escape(code_text)}</code>"
             )
         elif link_text is not None and link_url is not None:
@@ -450,7 +452,7 @@ def render_markdown_html(text: str) -> str:
                 f"{language_badge}"
                 "<pre style='margin:0; white-space:pre-wrap; word-break:break-word; "
                 "background:#fff7eb; border:1px solid #ead9c2; border-radius:12px; padding:12px; "
-                "font-family:\"JetBrains Mono\",\"Noto Sans Mono CJK SC\",monospace; font-size:12px; "
+                "font-family:monospace; font-size:12px; "
                 "line-height:1.55; color:#3a2d23;'>"
                 f"{html.escape(chr(10).join(code_lines))}</pre></div>"
             )
@@ -1377,10 +1379,24 @@ def load_file_session_candidates(codex_home: Path) -> dict[str, SessionCandidate
     return sessions
 
 
-def load_merged_session_candidates(codex_home: Path) -> dict[str, SessionCandidate]:
+def invalidate_session_candidate_cache(codex_home: Path | None = None) -> None:
+    if codex_home is None:
+        _MERGED_SESSION_CANDIDATE_CACHE.clear()
+        return
+    _MERGED_SESSION_CANDIDATE_CACHE.pop(str(codex_home.resolve()), None)
+
+
+def load_merged_session_candidates(codex_home: Path, force_refresh: bool = False) -> dict[str, SessionCandidate]:
+    cache_key = str(codex_home.resolve())
+    if not force_refresh:
+        cached = _MERGED_SESSION_CANDIDATE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
     merged = load_file_session_candidates(codex_home)
     for session_id, candidate in load_index_session_candidates(codex_home).items():
         merged[session_id] = merge_session_candidate(merged.get(session_id), candidate)
+    _MERGED_SESSION_CANDIDATE_CACHE[cache_key] = merged
     return merged
 
 
@@ -1424,8 +1440,9 @@ def load_sessions(
     account_key: str | None = None,
     session_account_map: dict[str, str] | None = None,
     session_aliases: dict[str, str] | None = None,
+    force_refresh: bool = False,
 ) -> list[SessionSummary]:
-    candidates = load_merged_session_candidates(config.codex_home)
+    candidates = load_merged_session_candidates(config.codex_home, force_refresh=force_refresh)
     sessions = [
         build_session_summary(item.session_id, item.thread_name, item.updated_at_raw, session_aliases)
         for item in candidates.values()
@@ -1440,8 +1457,9 @@ def load_session_summary(
     config: AppConfig,
     session_id: str,
     session_aliases: dict[str, str] | None = None,
+    force_refresh: bool = False,
 ) -> SessionSummary | None:
-    candidate = load_merged_session_candidates(config.codex_home).get(session_id)
+    candidate = load_merged_session_candidates(config.codex_home, force_refresh=force_refresh).get(session_id)
     if not candidate:
         return None
     return build_session_summary(candidate.session_id, candidate.thread_name, candidate.updated_at_raw, session_aliases)

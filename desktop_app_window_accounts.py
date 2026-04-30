@@ -256,15 +256,30 @@ class WindowAccountMixin:
                     return
                 latest_raw = raw_time or current_local_iso()
                 latest_label = to_local_time(latest_raw, "%m-%d %H:%M")
-                for collection in (self.sessions, self.filtered_sessions):
-                    for session in collection:
-                        if session.session_id != session_id:
-                            continue
-                        session.updated_at_raw = latest_raw
-                        session.updated_at = latest_label
+                latest_title = apply_session_alias(session_id, "新会话", self.session_aliases)
+                session_found = False
+                for session in self.sessions:
+                    if session.session_id != session_id:
+                        continue
+                    latest_title = session.thread_name or latest_title
+                    session.thread_name = latest_title
+                    session.updated_at_raw = latest_raw
+                    session.updated_at = latest_label
+                    session_found = True
+                    break
+
+                if not session_found:
+                    self.sessions.append(
+                        SessionSummary(
+                            session_id=session_id,
+                            thread_name=latest_title,
+                            updated_at=latest_label,
+                            updated_at_raw=latest_raw,
+                        )
+                    )
+
                 self.sessions.sort(key=lambda x: session_sort_key(x.updated_at_raw), reverse=True)
-                self.filtered_sessions.sort(key=lambda x: session_sort_key(x.updated_at_raw), reverse=True)
-                self.refresh_session_list()
+                self.apply_session_filters()
 
     def check_account_change(self) -> None:
                 if self.has_running_worker():

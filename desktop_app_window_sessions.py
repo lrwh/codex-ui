@@ -54,6 +54,14 @@ from desktop_app_workers import *
 from desktop_app_ui import *
 
 class WindowSessionMixin:
+    def draft_session_summary(self) -> SessionSummary:
+                return SessionSummary(
+                    session_id="__new__",
+                    thread_name="新会话",
+                    updated_at="草稿",
+                    updated_at_raw="",
+                )
+
     def is_session_running(self, session_id: str | None) -> bool:
                 if not session_id:
                     return False
@@ -120,6 +128,37 @@ class WindowSessionMixin:
                 self.session_list.clear()
                 current_row = -1
 
+                show_draft = self.active_session_id is None
+
+                def add_session_item(session: SessionSummary, selected: bool) -> None:
+                    nonlocal current_row
+                    item = QListWidgetItem()
+                    item.setData(Qt.UserRole, session.session_id)
+                    preview_widget = SessionListItem(
+                        session,
+                        False,
+                        query,
+                        running=self.is_session_running(session.session_id),
+                        unread=session.session_id in self.session_unread_ids,
+                    )
+                    item.setSizeHint(preview_widget.sizeHint())
+                    self.session_list.addItem(item)
+                    self.session_list.setItemWidget(
+                        item,
+                        SessionListItem(
+                            session,
+                            selected,
+                            query,
+                            running=self.is_session_running(session.session_id),
+                            unread=session.session_id in self.session_unread_ids,
+                        ),
+                    )
+                    if selected:
+                        current_row = self.session_list.row(item)
+
+                if show_draft:
+                    add_session_item(self.draft_session_summary(), selected=True)
+
                 pinned_sessions = [s for s in visible_sessions if s.session_id in self.pinned_session_ids]
                 regular_sessions = [s for s in visible_sessions if s.session_id not in self.pinned_session_ids]
 
@@ -147,30 +186,8 @@ class WindowSessionMixin:
                                 self.session_list.setItemWidget(header_item, header_widget)
                                 previous_group = group
 
-                        item = QListWidgetItem()
-                        item.setData(Qt.UserRole, session.session_id)
-                        preview_widget = SessionListItem(
-                            session,
-                            False,
-                            query,
-                            running=self.is_session_running(session.session_id),
-                            unread=session.session_id in self.session_unread_ids,
-                        )
-                        item.setSizeHint(preview_widget.sizeHint())
-                        self.session_list.addItem(item)
                         selected = session.session_id == self.active_session_id
-                        self.session_list.setItemWidget(
-                            item,
-                            SessionListItem(
-                                session,
-                                selected,
-                                query,
-                                running=self.is_session_running(session.session_id),
-                                unread=session.session_id in self.session_unread_ids,
-                            ),
-                        )
-                        if selected:
-                            current_row = self.session_list.row(item)
+                        add_session_item(session, selected)
 
                 add_group("置顶", pinned_sessions, time_grouped=False)
                 add_group("", regular_sessions, time_grouped=True)
@@ -190,7 +207,11 @@ class WindowSessionMixin:
 
     def refresh_sessions_for_account(self, keep_selection: bool = True) -> None:
                 previous = self.active_session_id if keep_selection else None
-                self.sessions = load_sessions(self.config, session_aliases=self.session_aliases)
+                self.sessions = load_sessions(
+                    self.config,
+                    session_aliases=self.session_aliases,
+                    force_refresh=True,
+                )
                 visible_ids = {session.session_id for session in self.sessions}
                 self.active_session_id = previous if previous in visible_ids else (self.sessions[0].session_id if self.sessions else None)
                 self.apply_session_filters()

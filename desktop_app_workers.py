@@ -219,6 +219,53 @@ class CodexWorker(QThread):
         self.finished_ok.emit()
 
 
+class ConversationLoadWorker(QThread):
+    finished_ok = Signal(str, str, object, object)
+    failed = Signal(str, str)
+
+    def __init__(self, session_id: str, path: Path, mtime_ns: int) -> None:
+        super().__init__()
+        self.session_id = session_id
+        self.path = path
+        self.mtime_ns = mtime_ns
+
+    def run(self) -> None:
+        messages: list[ChatMessage] = []
+        try:
+            with self.path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if self.isInterruptionRequested():
+                        return
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if item.get("type") != "response_item":
+                        continue
+                    payload = item.get("payload", {})
+                    if payload.get("type") != "message":
+                        continue
+                    role = payload.get("role")
+                    if role not in {"user", "assistant"}:
+                        continue
+                    text = extract_content_text(payload.get("content"))
+                    if not text:
+                        continue
+                    messages.append(
+                        ChatMessage(
+                            role=role,
+                            text=text,
+                            timestamp=to_local_time(item.get("timestamp", ""), "%H:%M"),
+                        )
+                    )
+        except OSError as exc:
+            if self.isInterruptionRequested():
+                return
+            self.failed.emit(self.session_id, str(exc))
+            return
+        self.finished_ok.emit(self.session_id, str(self.path), self.mtime_ns, messages)
+
+
 class AccountActionWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)

@@ -87,6 +87,12 @@ class MainWindow(
                 self.active_message_start_index = 0
                 self.initial_message_render_limit = INITIAL_CONVERSATION_RENDER_LIMIT
                 self.message_render_chunk_size = CONVERSATION_RENDER_CHUNK_SIZE
+                self.message_render_batch_size = MESSAGE_RENDER_BATCH_SIZE
+                self.pending_visible_messages: list[ChatMessage] = []
+                self.pending_scroll_to_top = False
+                self.active_session_loading = False
+                self.session_load_worker: ConversationLoadWorker | None = None
+                self.session_load_target_id = ""
                 self.sessions = load_sessions(self.config, session_aliases=self.session_aliases)
                 self.filtered_sessions = self.sessions[:]
                 self.active_session_id: str | None = self.sessions[0].session_id if self.sessions else None
@@ -114,6 +120,9 @@ class MainWindow(
                 self.status_clear_timer = QTimer(self)
                 self.status_clear_timer.setSingleShot(True)
                 self.status_clear_timer.timeout.connect(self.clear_status_text)
+                self.message_render_timer = QTimer(self)
+                self.message_render_timer.setSingleShot(True)
+                self.message_render_timer.timeout.connect(self.render_next_message_batch)
                 self.prompt_templates = [
                     ("代码评审", "请审查当前改动，优先指出 bug、回归风险、边界条件和缺失测试。"),
                     ("修复问题", "请先定位根因，再直接修改代码修复问题，并说明验证结果。"),

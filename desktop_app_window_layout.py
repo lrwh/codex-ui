@@ -142,6 +142,7 @@ class WindowLayoutMixin:
                 self.session_list = QListWidget()
                 self.session_list.setObjectName("sessionList")
                 self.session_list.currentRowChanged.connect(self.on_session_selected)
+                self.session_list.itemClicked.connect(self.on_session_item_clicked)
                 self.session_list.setFrameShape(QFrame.NoFrame)
                 self.session_list.setSpacing(4)
                 self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

@@ -249,17 +249,26 @@ class WindowConversationMixin:
                 if row < 0:
                     return
                 item = self.session_list.item(row)
+                self.activate_session_item(item)
+
+    def on_session_item_clicked(self, item: QListWidgetItem) -> None:
+                self.activate_session_item(item)
+
+    def activate_session_item(self, item: QListWidgetItem | None) -> None:
                 if not item:
                     return
                 session_id = item.data(Qt.UserRole)
                 if not session_id:
+                    return
+                if session_id == "__new__":
+                    self.new_session()
                     return
                 self.active_session_id = session_id
                 self.refresh_session_list()
                 self.update_work_dir_label()
                 self.load_active_session(scroll_to_top=False)
 
-    def current_session_messages(self) -> list[ChatMessage]:
+    def current_session_messages(self) -> list[ChatMessage] | None:
                 if not self.active_session_id:
                     return []
                 cached = self.session_message_cache.get(self.active_session_id)
@@ -272,17 +281,94 @@ class WindowConversationMixin:
                             mtime_ns = -1
                         if mtime_ns == cached.mtime_ns:
                             return cached.messages
-                path, mtime_ns = conversation_file_info(self.config.codex_home, self.active_session_id)
+                return None
+
+    def start_session_load(self, session_id: str, scroll_to_top: bool = False) -> None:
+                if self.session_load_worker is not None and self.session_load_worker.isRunning():
+                    self.session_load_worker.requestInterruption()
+                self.session_load_target_id = session_id
+                self.pending_scroll_to_top = scroll_to_top
+                path, mtime_ns = conversation_file_info(self.config.codex_home, session_id)
                 if not path:
-                    self.session_message_cache.pop(self.active_session_id, None)
-                    return []
-                messages = load_conversation_from_path(path)
-                self.session_message_cache[self.active_session_id] = ConversationCacheEntry(
-                    session_path=str(path),
+                    self.session_message_cache.pop(session_id, None)
+                    self.render_session_messages([], scroll_to_top)
+                    return
+                self.active_session_loading = True
+                self.message_count_label.setText("加载中...")
+                self.load_more_messages_button.hide()
+                worker = ConversationLoadWorker(session_id, path, mtime_ns)
+                self.session_load_worker = worker
+                worker.finished_ok.connect(self.on_session_messages_loaded)
+                worker.failed.connect(self.on_session_messages_failed)
+                worker.finished.connect(self.on_session_load_worker_finished)
+                worker.start()
+
+    def on_session_messages_loaded(
+                self,
+                session_id: str,
+                session_path: str,
+                mtime_ns: int,
+                messages: list[ChatMessage],
+            ) -> None:
+                self.session_message_cache[session_id] = ConversationCacheEntry(
+                    session_path=session_path,
                     mtime_ns=mtime_ns,
                     messages=messages,
                 )
-                return messages
+                if session_id != self.active_session_id or session_id != self.session_load_target_id:
+                    return
+                self.render_session_messages(messages, self.pending_scroll_to_top)
+
+    def on_session_messages_failed(self, session_id: str, error: str) -> None:
+                if session_id != self.active_session_id or session_id != self.session_load_target_id:
+                    return
+                self.active_session_loading = False
+                self.pending_visible_messages = []
+                self.message_count_label.setText("加载失败")
+                self.load_more_messages_button.hide()
+                self.set_status("会话加载失败", "idle")
+                self.request_error_label.setText(truncate_text(error, 220))
+                self.request_error_label.show()
+
+    def on_session_load_worker_finished(self) -> None:
+                worker = self.sender()
+                if worker is self.session_load_worker:
+                    self.session_load_worker = None
+                if worker is not None:
+                    worker.deleteLater()
+
+    def render_session_messages(self, messages: list[ChatMessage], scroll_to_top: bool = False) -> None:
+                self.active_session_loading = False
+                self.active_session_messages = messages
+                total = len(messages)
+                self.active_message_start_index = max(0, total - self.initial_message_render_limit)
+                self.pending_visible_messages = messages[self.active_message_start_index :]
+                self.pending_scroll_to_top = scroll_to_top
+                self.update_message_load_controls()
+                self.render_next_message_batch()
+
+    def render_next_message_batch(self) -> None:
+                if not self.pending_visible_messages:
+                    streaming_text = self.streaming_texts.get(self.current_request_key(), "")
+                    if streaming_text and self.current_request_key() not in self.streaming_bubbles:
+                        bubble = self.add_message(
+                            ChatMessage(role="assistant", text=streaming_text, timestamp=current_local_time()),
+                            auto_scroll=False,
+                        )
+                        self.streaming_bubbles[self.current_request_key()] = bubble
+                    if self.active_session_messages:
+                        self.reset_chat_scroll(to_top=self.pending_scroll_to_top)
+                    self.update_request_controls()
+                    return
+
+                batch = self.pending_visible_messages[: self.message_render_batch_size]
+                self.pending_visible_messages = self.pending_visible_messages[self.message_render_batch_size :]
+                for msg in batch:
+                    self.add_message(msg, auto_scroll=False)
+                if self.pending_visible_messages:
+                    self.message_render_timer.start(0)
+                    return
+                self.render_next_message_batch()
 
     def update_message_load_controls(self) -> None:
                 total = len(self.active_session_messages)
@@ -301,9 +387,11 @@ class WindowConversationMixin:
                 self.load_more_messages_button.hide()
 
     def clear_messages(self) -> None:
-                self.streaming_bubbles.pop(self.current_request_key(), None)
+                self.streaming_bubbles.clear()
                 self.active_session_messages = []
                 self.active_message_start_index = 0
+                self.pending_visible_messages = []
+                self.message_render_timer.stop()
                 self.streaming_bubble = None
                 self.streaming_text = ""
                 while self.chat_layout.count() > 0:
@@ -368,7 +456,18 @@ class WindowConversationMixin:
                     )
                     self.streaming_bubbles[request_key] = bubble
                     self.streaming_bubble = bubble
-                bubble.update_text(current_text)
+                try:
+                    bubble.update_text(current_text)
+                except RuntimeError:
+                    self.streaming_bubbles.pop(request_key, None)
+                    if request_key != self.current_request_key():
+                        return
+                    bubble = self.add_message(
+                        ChatMessage(role="assistant", text=current_text, timestamp=current_local_time()),
+                        auto_scroll=False,
+                    )
+                    self.streaming_bubbles[request_key] = bubble
+                    self.streaming_bubble = bubble
                 self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum())
 
     def finalize_assistant_message(self, request_key: str, text: str) -> None:
@@ -379,7 +478,12 @@ class WindowConversationMixin:
                 self.streaming_texts[request_key] = final_text
                 bubble = self.streaming_bubbles.get(request_key)
                 if bubble is not None:
-                    bubble.update_text(final_text)
+                    try:
+                        bubble.update_text(final_text)
+                    except RuntimeError:
+                        self.streaming_bubbles.pop(request_key, None)
+                        bubble = None
+                if bubble is not None:
                     self.streaming_bubbles.pop(request_key, None)
                     if self.streaming_bubble is bubble:
                         self.streaming_bubble = None
@@ -418,23 +522,10 @@ class WindowConversationMixin:
                 self.update_pin_button()
                 self.update_session_action_buttons()
                 messages = self.current_session_messages()
-                self.active_session_messages = messages
-                total = len(messages)
-                self.active_message_start_index = max(0, total - self.initial_message_render_limit)
-                visible_messages = messages[self.active_message_start_index :]
-                for msg in visible_messages:
-                    self.add_message(msg, auto_scroll=False)
-                self.update_message_load_controls()
-                streaming_text = self.streaming_texts.get(self.current_request_key(), "")
-                if streaming_text:
-                    bubble = self.add_message(
-                        ChatMessage(role="assistant", text=streaming_text, timestamp=current_local_time()),
-                        auto_scroll=False,
-                    )
-                    self.streaming_bubbles[self.current_request_key()] = bubble
-                if visible_messages:
-                    self.reset_chat_scroll(to_top=scroll_to_top)
-                self.update_request_controls()
+                if messages is not None:
+                    self.render_session_messages(messages, scroll_to_top)
+                    return
+                self.start_session_load(self.active_session_id, scroll_to_top)
 
     def reset_chat_scroll(self, to_top: bool) -> None:
                 target = 0 if to_top else self.chat_scroll.verticalScrollBar().maximum()
@@ -622,6 +713,7 @@ class WindowConversationMixin:
 
     def on_session_started(self, request_key: str, session_id: str) -> None:
                 if session_id:
+                    invalidate_session_candidate_cache(self.config.codex_home)
                     self.worker_key_aliases[request_key] = session_id
                     worker = self.workers.pop(request_key, None)
                     if worker is not None:
@@ -680,6 +772,7 @@ class WindowConversationMixin:
 
     def on_finished_ok(self, request_key: str) -> None:
                 request_key = self.resolve_request_key(request_key)
+                invalidate_session_candidate_cache(self.config.codex_home)
                 self.streaming_bubbles.pop(request_key, None)
                 self.streaming_texts.pop(request_key, None)
                 self.restore_request_account()
@@ -711,6 +804,10 @@ class WindowConversationMixin:
                     self.set_status("已停止当前请求", "idle")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+                self.message_render_timer.stop()
+                if self.session_load_worker is not None and self.session_load_worker.isRunning():
+                    self.session_load_worker.requestInterruption()
+                    self.session_load_worker.wait(3000)
                 for worker in list(self.workers.values()):
                     if worker.isRunning():
                         worker.stop()
