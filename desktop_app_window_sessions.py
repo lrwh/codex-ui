@@ -272,16 +272,18 @@ class WindowSessionMixin:
     def rename_current_session(self) -> None:
                 if not self.active_session_id:
                     return
+                if self.is_current_session_busy():
+                    self.set_status("当前会话运行中，暂不能重命名", "idle")
+                    return
                 current_title = next(
                     (session.thread_name for session in self.sessions if session.session_id == self.active_session_id),
                     self.active_session_id[:8],
                 )
-                new_title, accepted = QInputDialog.getText(self, "重命名会话", "本地别名", text=current_title)
+                new_title, accepted = QInputDialog.getText(self, "重命名会话", "会话名称", text=current_title)
                 if not accepted:
                     return
                 alias = new_title.strip()
                 if not alias:
-                    self.clear_current_session_alias()
                     return
                 self.session_aliases[self.active_session_id] = alias
                 save_session_aliases(self.session_aliases)

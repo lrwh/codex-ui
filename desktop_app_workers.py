@@ -265,7 +265,6 @@ class ConversationLoadWorker(QThread):
             return
         self.finished_ok.emit(self.session_id, str(self.path), self.mtime_ns, messages)
 
-
 class AccountActionWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)

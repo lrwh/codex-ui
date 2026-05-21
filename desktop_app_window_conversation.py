@@ -804,6 +804,22 @@ class WindowConversationMixin:
                     self.set_status("已停止当前请求", "idle")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+                has_running_tasks = (
+                    self.has_running_worker()
+                    or (self.session_load_worker is not None and self.session_load_worker.isRunning())
+                    or (self.account_worker is not None and self.account_worker.isRunning())
+                )
+                if has_running_tasks:
+                    answer = QMessageBox.question(
+                        self,
+                        "Codex for Linux",
+                        "当前仍有任务正在运行，关闭窗口后会中断这些任务。是否继续关闭？",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if answer != QMessageBox.Yes:
+                        event.ignore()
+                        return
                 self.message_render_timer.stop()
                 if self.session_load_worker is not None and self.session_load_worker.isRunning():
                     self.session_load_worker.requestInterruption()

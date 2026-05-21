@@ -206,7 +206,7 @@ class WindowLayoutMixin:
                 self.rename_session_button = self.make_scope_button("重命名", self.rename_current_session)
                 self.copy_session_id_button = self.make_scope_button("复制 ID", self.copy_current_session_id)
                 self.open_session_file_button = self.make_scope_button("打开文件", self.open_current_session_file)
-                self.clear_session_alias_button = self.make_scope_button("清别名", self.clear_current_session_alias)
+                self.clear_session_alias_button = self.make_scope_button("清本地别名", self.clear_current_session_alias)
                 self.edit_work_dir_button = self.make_scope_button("改路径", self.edit_current_work_dir)
                 self.pin_button = QPushButton("置顶")
                 self.pin_button.setObjectName("pinButton")
