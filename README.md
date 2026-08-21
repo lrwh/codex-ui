@@ -67,7 +67,7 @@ python3 -m pip install PySide6 PyInstaller
 如果你已经拿到构建好的安装包，可以直接执行：
 
 ```bash
-sudo dpkg -i codex-ui_0.3.3_amd64.deb
+sudo dpkg -i codex-ui_0.3.4_amd64.deb
 ```
 
 安装后会写入：

@@ -349,19 +349,60 @@ def build_prompt_with_attachments(prompt: str, attachments: list[AttachmentInfo]
 
 
 def sanitize_session_title(text: str) -> str:
-    compact = " ".join((text or "").split()).strip()
-    if not compact:
-        return ""
     internal_prefixes = (
         "<turn_aborted>",
         "<environment_context>",
+        "<skills_instructions>",
+        "<plugins_instructions>",
+        "<apps_instructions>",
+        "<recommended_plugins>",
+        "<skill>",
+        "<name>",
+        "<cwd>",
+        "<shell>",
+        "<current_date>",
+        "<timezone>",
+        "<approval_policy>",
+        "<sandbox_policy>",
+        "<environment_context>",
+        "---",
+        "name:",
+        "description:",
         "# AGENTS.md instructions",
         "<INSTRUCTIONS>",
         "<permissions instructions>",
+        "Always respond in Chinese-simplified",
+        "Here is a list of plugins that are available but not installed.",
+        "You are Codex, an agent based on GPT-5.",
+        "You are Codex, a coding agent based on GPT-5.",
+        "## Skills",
     )
-    if any(compact.startswith(prefix) for prefix in internal_prefixes):
-        return ""
-    return compact[:120]
+    lines = [line.strip() for line in str(text or "").replace("\r", "\n").split("\n")]
+    for line in lines:
+        if not line:
+            continue
+        if any(line.startswith(prefix) for prefix in internal_prefixes):
+            continue
+        if re.fullmatch(r"</?[A-Za-z0-9_:-]+>", line):
+            continue
+        if re.fullmatch(r"<[A-Za-z0-9_:-]+>.*</[A-Za-z0-9_:-]+>", line):
+            continue
+        if line.startswith("- ") and "@openai-" in line:
+            continue
+        heading = re.sub(r"^#{1,6}\s*", "", line).strip()
+        compact = " ".join(heading.split()).strip()
+        if not compact:
+            continue
+        if any(compact.startswith(prefix) for prefix in internal_prefixes):
+            continue
+        if re.fullmatch(r"</?[A-Za-z0-9_:-]+>", compact):
+            continue
+        if re.fullmatch(r"<[A-Za-z0-9_:-]+>.*</[A-Za-z0-9_:-]+>", compact):
+            continue
+        if compact.startswith("- ") and "@openai-" in compact:
+            continue
+        return compact[:120]
+    return ""
 
 
 def highlight_match(text: str, query: str) -> str:
@@ -548,6 +589,22 @@ def to_local_time(raw: str, fmt: str, fallback: str = "") -> str:
         return dt.astimezone().strftime(fmt)
     except ValueError:
         return fallback or raw
+
+
+def format_message_timestamp(raw: str, fallback: str = "") -> str:
+    if not raw:
+        return fallback
+    try:
+        normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        dt = datetime.fromisoformat(normalized).astimezone()
+    except ValueError:
+        return fallback or raw
+    now = datetime.now().astimezone()
+    if dt.date() == now.date():
+        return dt.strftime("%H:%M")
+    if dt.year == now.year:
+        return dt.strftime("%m-%d %H:%M")
+    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def current_local_time(fmt: str = "%H:%M") -> str:
@@ -1328,12 +1385,14 @@ def scan_session_file_candidate(path: Path) -> SessionCandidate | None:
                 if item_type == "event_msg" and isinstance(payload, dict):
                     payload_type = payload.get("type")
                     if payload_type == "thread_name_updated":
-                        candidate_name = str(payload.get("thread_name", "")).strip()
+                        candidate_name = sanitize_session_title(str(payload.get("thread_name", "")))
                         if candidate_name:
                             thread_name = candidate_name
                             title_priority = 3
                     elif payload_type == "user_message" and not first_user_message:
-                        first_user_message = str(payload.get("message", "")).strip()
+                        candidate_message = sanitize_session_title(str(payload.get("message", "")))
+                        if candidate_message:
+                            first_user_message = candidate_message
                     continue
 
                 if (
@@ -1343,7 +1402,9 @@ def scan_session_file_candidate(path: Path) -> SessionCandidate | None:
                     and payload.get("role") == "user"
                     and not response_user_message
                 ):
-                    response_user_message = extract_content_text(payload.get("content"))
+                    candidate_message = sanitize_session_title(extract_content_text(payload.get("content")))
+                    if candidate_message:
+                        response_user_message = candidate_message
     except OSError:
         return None
 
@@ -1506,11 +1567,11 @@ def load_conversation_from_path(path: Path | None) -> list[ChatMessage]:
             text = extract_content_text(payload.get("content"))
             if not text:
                 continue
-            messages.append(
-                ChatMessage(
-                    role=role,
-                    text=text,
-                    timestamp=to_local_time(item.get("timestamp", ""), "%H:%M"),
+                messages.append(
+                    ChatMessage(
+                        role=role,
+                        text=text,
+                        timestamp=format_message_timestamp(item.get("timestamp", "")),
+                    )
                 )
-            )
     return messages

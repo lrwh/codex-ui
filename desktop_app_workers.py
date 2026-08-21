@@ -255,7 +255,7 @@ class ConversationLoadWorker(QThread):
                         ChatMessage(
                             role=role,
                             text=text,
-                            timestamp=to_local_time(item.get("timestamp", ""), "%H:%M"),
+                            timestamp=format_message_timestamp(item.get("timestamp", "")),
                         )
                     )
         except OSError as exc:

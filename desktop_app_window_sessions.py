@@ -122,7 +122,7 @@ class WindowSessionMixin:
                     button.style().polish(button)
 
     def refresh_session_list(self) -> None:
-                visible_sessions = self.filtered_sessions[: self.visible_session_limit]
+                filtered_sessions = self.filtered_sessions[:]
                 query = self.search.text().strip()
                 self.session_list.blockSignals(True)
                 self.session_list.clear()
@@ -159,8 +159,22 @@ class WindowSessionMixin:
                 if show_draft:
                     add_session_item(self.draft_session_summary(), selected=True)
 
-                pinned_sessions = [s for s in visible_sessions if s.session_id in self.pinned_session_ids]
-                regular_sessions = [s for s in visible_sessions if s.session_id not in self.pinned_session_ids]
+                pinned_sessions = [s for s in filtered_sessions if s.session_id in self.pinned_session_ids]
+                regular_source = [s for s in filtered_sessions if s.session_id not in self.pinned_session_ids]
+
+                regular_limit = self.visible_session_limit
+                regular_sessions = regular_source[:regular_limit]
+                if (
+                    self.active_session_id
+                    and self.active_session_id not in self.pinned_session_ids
+                    and self.active_session_id not in {s.session_id for s in regular_sessions}
+                ):
+                    active_session = next(
+                        (s for s in regular_source if s.session_id == self.active_session_id),
+                        None,
+                    )
+                    if active_session is not None:
+                        regular_sessions.append(active_session)
 
                 def add_group(title: str, group_sessions: list[SessionSummary], time_grouped: bool) -> None:
                     nonlocal current_row
@@ -194,7 +208,7 @@ class WindowSessionMixin:
 
                 if current_row >= 0:
                     self.session_list.setCurrentRow(current_row)
-                elif visible_sessions:
+                elif pinned_sessions or regular_sessions:
                     for i in range(self.session_list.count()):
                         item = self.session_list.item(i)
                         if item and item.data(Qt.UserRole):
@@ -203,7 +217,7 @@ class WindowSessionMixin:
                 elif self.active_session_id is not None:
                     self.active_session_id = None
                 self.session_list.blockSignals(False)
-                self.load_more_button.setVisible(len(self.filtered_sessions) > len(visible_sessions))
+                self.load_more_button.setVisible(len(regular_source) > len(regular_sessions))
 
     def refresh_sessions_for_account(self, keep_selection: bool = True) -> None:
                 previous = self.active_session_id if keep_selection else None
