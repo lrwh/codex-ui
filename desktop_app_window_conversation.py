@@ -169,6 +169,7 @@ class WindowConversationMixin:
                 self.stop_button.setVisible(busy)
                 self.stop_button.setEnabled(busy)
                 self.add_attachment_button.setEnabled(not busy)
+                self.prompt_menu_button.setEnabled(not busy)
                 self.input_box.setEnabled(not busy)
                 self.new_button.setEnabled(True)
                 if busy:
@@ -223,6 +224,7 @@ class WindowConversationMixin:
                 self.input_box.setEnabled(True)
                 self.send_button.setEnabled(True)
                 self.add_attachment_button.setEnabled(True)
+                self.prompt_menu_button.setEnabled(True)
 
     def retry_last_prompt(self) -> None:
                 if (not self.last_prompt and not self.last_attachments) or self.is_current_session_busy():
@@ -260,11 +262,57 @@ class WindowConversationMixin:
                 session_id = item.data(Qt.UserRole)
                 if not session_id:
                     return
+                if str(session_id).startswith("__group__:"):
+                    group = str(session_id).removeprefix("__group__:")
+                    scroll_bar = self.session_list.verticalScrollBar()
+                    scroll_position = scroll_bar.value()
+                    if group in self.collapsed_session_groups:
+                        self.collapsed_session_groups.remove(group)
+                    else:
+                        self.collapsed_session_groups.add(group)
+                    self.refresh_session_list()
+                    scroll_bar.setValue(scroll_position)
+                    QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_position))
+                    return
+                if str(session_id).startswith("__project__:"):
+                    project_id = str(session_id).removeprefix("__project__:")
+                    scroll_bar = self.session_list.verticalScrollBar()
+                    scroll_position = scroll_bar.value()
+                    self.selected_project_context_id = project_id
+                    for project in self.projects:
+                        project.selected = project.project_id == project_id
+                    if project_id in self.collapsed_project_ids:
+                        self.collapsed_project_ids.remove(project_id)
+                    else:
+                        self.collapsed_project_ids.add(project_id)
+                    expanded = project_id not in self.collapsed_project_ids
+                    try:
+                        set_codex_project_sidebar_state(
+                            self.config.codex_home,
+                            project_id,
+                            expanded,
+                        )
+                    except (OSError, ValueError, json.JSONDecodeError):
+                        pass
+                    self.refresh_session_list()
+                    scroll_bar.setValue(scroll_position)
+                    QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_position))
+                    return
                 if session_id == "__new__":
                     self.new_session()
                     return
+                if session_id == self.active_session_id:
+                    return
                 self.active_session_id = session_id
-                self.refresh_session_list()
+                summary = next(
+                    (session for session in self.sessions if session.session_id == session_id),
+                    None,
+                )
+                project = self.session_project(summary) if summary else None
+                self.selected_project_context_id = project.project_id if project else ""
+                for item_project in self.projects:
+                    item_project.selected = bool(project and item_project.project_id == project.project_id)
+                self.update_session_list_selection()
                 self.update_work_dir_label()
                 self.load_active_session(scroll_to_top=False)
 
@@ -494,6 +542,7 @@ class WindowConversationMixin:
 
     def load_active_session(self, scroll_to_top: bool = False) -> None:
                 self.clear_messages()
+                self.update_model_selectors()
                 if not self.is_current_session_busy():
                     self.set_request_ready_feedback()
                 self.clear_session_unread(self.active_session_id)
@@ -567,23 +616,110 @@ class WindowConversationMixin:
                     f" · 推理: {reasoning_effort_display_name(reasoning_effort)}"
                 )
 
+    def current_model_settings(self) -> tuple[str, str]:
+                if not self.active_session_id:
+                    model = self.new_session_model
+                    return (
+                        "" if is_retired_model(model) else model,
+                        self.new_session_reasoning_effort,
+                    )
+                override = self.session_model_overrides.get(self.active_session_id)
+                if override is not None:
+                    model = str(override.get("model") or "").strip()
+                    return (
+                        "" if is_retired_model(model) else model,
+                        normalize_reasoning_effort(override.get("reasoning_effort")),
+                    )
+                model, effort = load_session_model_settings(self.config.codex_home, self.active_session_id)
+                if model:
+                    return "" if is_retired_model(model) else model, effort
+                fallback = self.config.model
+                return (
+                    "" if is_retired_model(fallback) else fallback,
+                    self.config.model_reasoning_effort,
+                )
+
+    def recorded_session_model(self) -> str:
+                if not self.active_session_id:
+                    return self.new_session_model
+                override = self.session_model_overrides.get(self.active_session_id)
+                if override is not None:
+                    return str(override.get("model") or "").strip()
+                model, _effort = load_session_model_settings(
+                    self.config.codex_home,
+                    self.active_session_id,
+                )
+                return model
+
+    def update_model_selectors(self) -> None:
+                if not hasattr(self, "model_combo"):
+                    return
+                model, effort = self.current_model_settings()
+                recorded_model = self.recorded_session_model()
+                self.model_combo.blockSignals(True)
+                self.model_combo.clear()
+                for value in model_choices(model, self.config.codex_home):
+                    if value:
+                        label = value
+                    elif is_retired_model(recorded_model):
+                        label = f"CLI 默认（{recorded_model} 已下线）"
+                    else:
+                        label = "CLI 默认"
+                    self.model_combo.addItem(label, value)
+                model_index = self.model_combo.findData(model)
+                self.model_combo.setCurrentIndex(model_index if model_index >= 0 else 0)
+                self.model_combo.setToolTip(f"当前会话模型：{model_display_name(model)}")
+                self.model_combo.blockSignals(False)
+
+                self.reasoning_combo.blockSignals(True)
+                effort_index = self.reasoning_combo.findData(normalize_reasoning_effort(effort))
+                self.reasoning_combo.setCurrentIndex(effort_index if effort_index >= 0 else 0)
+                self.reasoning_combo.setToolTip(
+                    f"当前推理强度：{reasoning_effort_display_name(effort)}"
+                )
+                self.reasoning_combo.blockSignals(False)
+
+    def on_model_selector_changed(self) -> None:
+                if not hasattr(self, "model_combo"):
+                    return
+                self.apply_model_settings(
+                    str(self.model_combo.currentData() or ""),
+                    str(self.reasoning_combo.currentData() or ""),
+                )
+
     def apply_model_settings(
                 self,
                 model: str | None = None,
                 reasoning_effort: str | None = None,
             ) -> None:
-                next_model = self.config.model if model is None else self.normalize_model_command_value(model)
+                current_model, current_reasoning_effort = self.current_model_settings()
+                if model is not None and is_retired_model(model):
+                    self.update_model_selectors()
+                    self.set_status(f"{model} 已下线，请选择其他模型", "error")
+                    return
+                next_model = current_model if model is None else self.normalize_model_command_value(model)
                 next_reasoning_effort = (
-                    self.config.model_reasoning_effort
+                    current_reasoning_effort
                     if reasoning_effort is None
                     else normalize_reasoning_effort(reasoning_effort)
                 )
-                if next_model == self.config.model and next_reasoning_effort == self.config.model_reasoning_effort:
+                if next_model == current_model and next_reasoning_effort == current_reasoning_effort:
+                    self.update_model_selectors()
                     self.set_status(f"当前{self.model_settings_label(next_model, next_reasoning_effort)}", "idle")
                     return
-                self.config.model = next_model
-                self.config.model_reasoning_effort = next_reasoning_effort
-                save_config(self.config)
+                if self.active_session_id:
+                    self.session_model_overrides[self.active_session_id] = {
+                        "model": next_model,
+                        "reasoning_effort": next_reasoning_effort,
+                    }
+                    save_session_model_overrides(self.session_model_overrides)
+                else:
+                    self.new_session_model = next_model
+                    self.new_session_reasoning_effort = next_reasoning_effort
+                    self.config.model = next_model
+                    self.config.model_reasoning_effort = next_reasoning_effort
+                    save_config(self.config)
+                self.update_model_selectors()
                 self.set_status(f"已切换 {self.model_settings_label(next_model, next_reasoning_effort)}", "idle")
 
     def open_model_selection_dialog(self) -> None:
@@ -643,10 +779,16 @@ class WindowConversationMixin:
 
     def new_session(self) -> None:
                 self.active_session_id = None
-                self.new_session_work_dir = self.config.work_dir
-                self.new_session_work_dir_overridden = False
+                project = self.project_by_id.get(self.selected_project_context_id)
+                project_root = Path(project.root_paths[0]).expanduser() if project and project.root_paths else None
+                self.new_session_work_dir = project_root or self.config.work_dir
+                self.new_session_work_dir_overridden = self.new_session_work_dir != self.config.work_dir
+                self.new_session_project_id = project.project_id if project_root and project else ""
+                self.new_session_model = self.config.model
+                self.new_session_reasoning_effort = self.config.model_reasoning_effort
                 self.refresh_session_list()
                 self.update_work_dir_label()
+                self.update_model_selectors()
                 self.load_active_session(scroll_to_top=True)
                 self.set_status("已切换到新会话", "idle")
 
@@ -691,12 +833,15 @@ class WindowConversationMixin:
                 self.set_status("", "running")
 
                 image_paths = [item.path for item in attachments if item.kind == "image"]
+                model, reasoning_effort = self.current_model_settings()
                 worker = CodexWorker(
                     self.config,
                     self.active_session_id,
                     final_prompt,
                     image_paths=image_paths,
                     work_dir=self.current_effective_work_dir(),
+                    model=model,
+                    reasoning_effort=reasoning_effort,
                 )
                 self.workers[request_key] = worker
                 self.worker = worker
@@ -726,10 +871,32 @@ class WindowConversationMixin:
                         self.session_work_dir_overrides[session_id] = str(self.new_session_work_dir)
                         save_session_work_dir_overrides(self.session_work_dir_overrides)
                         self.new_session_work_dir_overridden = False
+                    if request_key == "__new__":
+                        if self.new_session_project_id:
+                            try:
+                                assign_session_to_codex_project(
+                                    self.config.codex_home,
+                                    session_id,
+                                    self.new_session_project_id,
+                                )
+                                self.refresh_project_catalog()
+                            except (OSError, ValueError, json.JSONDecodeError):
+                                pass
+                            self.new_session_project_id = ""
+                        self.session_model_overrides[session_id] = {
+                            "model": worker.model if worker is not None else self.new_session_model,
+                            "reasoning_effort": (
+                                worker.reasoning_effort
+                                if worker is not None
+                                else self.new_session_reasoning_effort
+                            ),
+                        }
+                        save_session_model_overrides(self.session_model_overrides)
                     self.active_session_id = session_id
                     self.bind_session_to_active_account(session_id)
                     self.mark_session_updated(session_id)
                     self.update_work_dir_label()
+                    self.update_model_selectors()
                     self.update_request_controls()
                     self.refresh_session_list()
 

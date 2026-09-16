@@ -60,7 +60,87 @@ class WindowSessionMixin:
                     thread_name="新会话",
                     updated_at="草稿",
                     updated_at_raw="",
+                    cwd=str(self.new_session_work_dir),
                 )
+
+    def session_cwd(self, session: SessionSummary) -> str:
+                override = (self.session_work_dir_overrides.get(session.session_id) or "").strip()
+                return override or session.cwd or str(self.config.work_dir)
+
+    def session_project(self, session: SessionSummary) -> CodexProject | None:
+                explicit_id = self.session_project_ids.get(session.session_id)
+                if explicit_id:
+                    return self.project_by_id.get(explicit_id)
+
+                try:
+                    cwd = Path(self.session_cwd(session)).expanduser().resolve(strict=False)
+                except (OSError, RuntimeError):
+                    return None
+                for project in self.projects:
+                    for raw_root in project.root_paths:
+                        try:
+                            root = Path(raw_root).expanduser().resolve(strict=False)
+                        except (OSError, RuntimeError):
+                            continue
+                        if cwd == root or root in cwd.parents:
+                            return project
+                return None
+
+    def refresh_project_catalog(self) -> None:
+                previous_collapsed = set(self.collapsed_project_ids)
+                previous_ids = set(self.project_by_id)
+                self.projects = load_codex_projects(self.config.codex_home)
+                self.project_by_id = {project.project_id: project for project in self.projects}
+                self.session_project_ids = {
+                    session_id: project.project_id
+                    for project in self.projects
+                    for session_id in project.session_ids
+                }
+                self.collapsed_project_ids = {
+                    project.project_id
+                    for project in self.projects
+                    if (
+                        project.project_id in previous_collapsed
+                        if project.project_id in previous_ids
+                        else not project.expanded
+                    )
+                }
+
+    def create_project(self) -> None:
+                directory = QFileDialog.getExistingDirectory(
+                    self,
+                    "选择项目目录",
+                    str(self.current_effective_work_dir()),
+                )
+                if not directory:
+                    return
+                root = Path(directory).expanduser().resolve()
+                name, accepted = QInputDialog.getText(
+                    self,
+                    "新建项目",
+                    "项目名称",
+                    text=root.name,
+                )
+                if not accepted or not name.strip():
+                    return
+                try:
+                    project_id = create_codex_local_project(
+                        self.config.codex_home,
+                        name.strip(),
+                        root,
+                    )
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    QMessageBox.critical(self, "Codex for Linux", f"创建项目失败：{exc}")
+                    return
+
+                self.refresh_project_catalog()
+                self.selected_project_context_id = project_id
+                self.collapsed_project_ids.discard(project_id)
+                for project in self.projects:
+                    project.selected = project.project_id == project_id
+                self.session_scope = "all"
+                self.apply_session_filters()
+                self.set_status("项目已创建", "idle")
 
     def is_session_running(self, session_id: str | None) -> bool:
                 if not session_id:
@@ -102,35 +182,55 @@ class WindowSessionMixin:
 
                 query = self.search.text().strip().lower()
                 if query:
-                    sessions = [
-                        s for s in sessions if query in s.thread_name.lower() or query in s.session_id.lower()
-                    ]
+                    matched: list[SessionSummary] = []
+                    for session in sessions:
+                        project = self.session_project(session)
+                        project_text = ""
+                        if project:
+                            project_text = " ".join([project.name, *project.root_paths]).lower()
+                        if (
+                            query in session.thread_name.lower()
+                            or query in session.session_id.lower()
+                            or query in self.session_cwd(session).lower()
+                            or query in project_text
+                        ):
+                            matched.append(session)
+                    sessions = matched
                 self.filtered_sessions = sessions
                 self.visible_session_limit = self.session_page_size
                 self.refresh_session_list()
 
     def update_session_scope_buttons(self) -> None:
-                scope_buttons = {
-                    "all": self.scope_all_button,
-                    "pinned": self.scope_pinned_button,
-                    "recent": self.scope_recent_button,
-                }
-                for scope, button in scope_buttons.items():
-                    selected = scope == self.session_scope
-                    button.setProperty("selected", selected)
-                    button.style().unpolish(button)
-                    button.style().polish(button)
+                return
+
+    def update_session_list_selection(self) -> None:
+                for row in range(self.session_list.count()):
+                    item = self.session_list.item(row)
+                    item_id = str(item.data(Qt.UserRole) or "")
+                    widget = self.session_list.itemWidget(item)
+                    if isinstance(widget, SessionListItem):
+                        widget.set_selected(item_id == self.active_session_id)
+                    elif isinstance(widget, ProjectGroupHeader):
+                        project_id = item_id.removeprefix("__project__:")
+                        widget.set_selected(project_id == self.selected_project_context_id)
 
     def refresh_session_list(self) -> None:
                 filtered_sessions = self.filtered_sessions[:]
                 query = self.search.text().strip()
+                scroll_bar = self.session_list.verticalScrollBar()
+                had_items = self.session_list.count() > 0
+                scroll_position = scroll_bar.value()
                 self.session_list.blockSignals(True)
                 self.session_list.clear()
                 current_row = -1
 
                 show_draft = self.active_session_id is None
 
-                def add_session_item(session: SessionSummary, selected: bool) -> None:
+                def add_session_item(
+                    session: SessionSummary,
+                    selected: bool,
+                    compact: bool = False,
+                ) -> None:
                     nonlocal current_row
                     item = QListWidgetItem()
                     item.setData(Qt.UserRole, session.session_id)
@@ -140,6 +240,7 @@ class WindowSessionMixin:
                         query,
                         running=self.is_session_running(session.session_id),
                         unread=session.session_id in self.session_unread_ids,
+                        compact=compact,
                     )
                     item.setSizeHint(preview_widget.sizeHint())
                     self.session_list.addItem(item)
@@ -151,6 +252,7 @@ class WindowSessionMixin:
                             query,
                             running=self.is_session_running(session.session_id),
                             unread=session.session_id in self.session_unread_ids,
+                            compact=compact,
                         ),
                     )
                     if selected:
@@ -162,65 +264,168 @@ class WindowSessionMixin:
                 pinned_sessions = [s for s in filtered_sessions if s.session_id in self.pinned_session_ids]
                 regular_source = [s for s in filtered_sessions if s.session_id not in self.pinned_session_ids]
 
-                regular_limit = self.visible_session_limit
-                regular_sessions = regular_source[:regular_limit]
-                if (
-                    self.active_session_id
-                    and self.active_session_id not in self.pinned_session_ids
-                    and self.active_session_id not in {s.session_id for s in regular_sessions}
-                ):
-                    active_session = next(
-                        (s for s in regular_source if s.session_id == self.active_session_id),
-                        None,
-                    )
-                    if active_session is not None:
-                        regular_sessions.append(active_session)
-
                 def add_group(title: str, group_sessions: list[SessionSummary], time_grouped: bool) -> None:
                     nonlocal current_row
-                    previous_group = ""
                     if not group_sessions:
                         return
-                    if not time_grouped:
+
+                    def add_group_header(group: str, count: int) -> bool:
+                        collapsed = group in self.collapsed_session_groups
                         header_item = QListWidgetItem()
-                        header_item.setFlags(Qt.NoItemFlags)
-                        header_widget = SessionGroupHeader(title)
+                        header_item.setFlags(Qt.ItemIsEnabled)
+                        header_item.setData(Qt.UserRole, f"__group__:{group}")
+                        header_widget = SessionGroupHeader(
+                            f"{group} {count}",
+                            group_key=group,
+                            collapsible=True,
+                            collapsed=collapsed,
+                        )
                         header_item.setSizeHint(header_widget.sizeHint())
                         self.session_list.addItem(header_item)
                         self.session_list.setItemWidget(header_item, header_widget)
-                    for session in group_sessions:
-                        if time_grouped:
+                        return collapsed
+
+                    if not time_grouped:
+                        if add_group_header(title, len(group_sessions)):
+                            return
+                        visible_groups = [(title, group_sessions)]
+                    else:
+                        grouped_sessions: dict[str, list[SessionSummary]] = {}
+                        for session in group_sessions:
                             group = session_group_label(session.updated_at_raw)
-                            if group != previous_group:
-                                header_item = QListWidgetItem()
-                                header_item.setFlags(Qt.NoItemFlags)
-                                header_widget = SessionGroupHeader(group)
-                                header_item.setSizeHint(header_widget.sizeHint())
-                                self.session_list.addItem(header_item)
-                                self.session_list.setItemWidget(header_item, header_widget)
-                                previous_group = group
+                            grouped_sessions.setdefault(group, []).append(session)
+                        visible_groups = [
+                            (group, grouped_sessions[group])
+                            for group in ("今天", "昨天", "本周", "历史")
+                            if group in grouped_sessions
+                        ]
 
-                        selected = session.session_id == self.active_session_id
-                        add_session_item(session, selected)
+                    for group, sessions_in_group in visible_groups:
+                        if time_grouped and add_group_header(group, len(sessions_in_group)):
+                            continue
+                        for session in sessions_in_group:
+                            selected = session.session_id == self.active_session_id
+                            add_session_item(session, selected)
 
-                add_group("置顶", pinned_sessions, time_grouped=False)
-                add_group("", regular_sessions, time_grouped=True)
+                load_more_source: list[SessionSummary] = []
+                displayed_sessions: list[SessionSummary] = []
+                if self.session_scope == "all":
+                    add_group("置顶", pinned_sessions, time_grouped=False)
+
+                    if self.projects:
+                        project_header = QListWidgetItem()
+                        project_header.setFlags(Qt.NoItemFlags)
+                        project_header_widget = SessionGroupHeader("项目", group_key="项目")
+                        project_header.setSizeHint(project_header_widget.sizeHint())
+                        self.session_list.addItem(project_header)
+                        self.session_list.setItemWidget(project_header, project_header_widget)
+
+                    sessions_by_project: dict[str, list[SessionSummary]] = {
+                        project.project_id: [] for project in self.projects
+                    }
+                    projectless_sessions: list[SessionSummary] = []
+                    for session in regular_source:
+                        project = self.session_project(session)
+                        if project:
+                            sessions_by_project[project.project_id].append(session)
+                        else:
+                            projectless_sessions.append(session)
+
+                    query_lower = query.lower()
+                    for project in self.projects:
+                        project_sessions = sessions_by_project.get(project.project_id, [])
+                        project_text = " ".join([project.name, *project.root_paths]).lower()
+                        if query_lower and query_lower not in project_text and not project_sessions:
+                            continue
+
+                        by_id = {session.session_id: session for session in project_sessions}
+                        ordered_sessions = [
+                            by_id.pop(session_id)
+                            for session_id in project.session_ids
+                            if session_id in by_id
+                        ]
+                        ordered_sessions.extend(by_id.values())
+                        collapsed = project.project_id in self.collapsed_project_ids
+                        header_item = QListWidgetItem()
+                        header_item.setFlags(Qt.ItemIsEnabled)
+                        header_item.setData(Qt.UserRole, f"__project__:{project.project_id}")
+                        tooltip = "\n".join(project.root_paths)
+                        header_widget = ProjectGroupHeader(
+                            project.name,
+                            tooltip,
+                            collapsed,
+                            project.selected,
+                        )
+                        header_item.setSizeHint(header_widget.sizeHint())
+                        header_item.setToolTip(tooltip)
+                        self.session_list.addItem(header_item)
+                        self.session_list.setItemWidget(header_item, header_widget)
+                        if not collapsed:
+                            for session in ordered_sessions:
+                                add_session_item(
+                                    session,
+                                    session.session_id == self.active_session_id,
+                                    compact=True,
+                                )
+
+                    recent_sessions = projectless_sessions[: self.visible_session_limit]
+                    if (
+                        self.active_session_id
+                        and self.active_session_id not in {s.session_id for s in recent_sessions}
+                    ):
+                        active_session = next(
+                            (s for s in projectless_sessions if s.session_id == self.active_session_id),
+                            None,
+                        )
+                        if active_session:
+                            recent_sessions.append(active_session)
+                    add_group("", recent_sessions, time_grouped=True)
+                    load_more_source = projectless_sessions
+                    displayed_sessions = recent_sessions
+                elif self.session_scope == "pinned":
+                    add_group("置顶", pinned_sessions, time_grouped=False)
+                    displayed_sessions = pinned_sessions
+                else:
+                    regular_sessions = regular_source[: self.visible_session_limit]
+                    add_group("置顶", pinned_sessions, time_grouped=False)
+                    add_group("", regular_sessions, time_grouped=True)
+                    load_more_source = regular_source
+                    displayed_sessions = regular_sessions
+
+                active_project_collapsed = False
+                if self.session_scope == "all" and self.active_session_id:
+                    active_summary = next(
+                        (session for session in regular_source if session.session_id == self.active_session_id),
+                        None,
+                    )
+                    active_project = self.session_project(active_summary) if active_summary else None
+                    active_project_collapsed = bool(
+                        active_project
+                        and active_project.project_id in self.collapsed_project_ids
+                    )
 
                 if current_row >= 0:
                     self.session_list.setCurrentRow(current_row)
-                elif pinned_sessions or regular_sessions:
+                elif not active_project_collapsed and not self.active_session_id:
                     for i in range(self.session_list.count()):
                         item = self.session_list.item(i)
-                        if item and item.data(Qt.UserRole):
+                        item_id = item.data(Qt.UserRole) if item else ""
+                        if item_id and not str(item_id).startswith("__project__:"):
                             self.session_list.setCurrentRow(i)
                             break
-                elif self.active_session_id is not None:
-                    self.active_session_id = None
                 self.session_list.blockSignals(False)
-                self.load_more_button.setVisible(len(regular_source) > len(regular_sessions))
+                self.load_more_button.setVisible(len(load_more_source) > len(displayed_sessions))
+                if had_items:
+                    def restore_scroll_position() -> None:
+                        current_bar = self.session_list.verticalScrollBar()
+                        current_bar.setValue(min(scroll_position, current_bar.maximum()))
+
+                    restore_scroll_position()
+                    QTimer.singleShot(0, restore_scroll_position)
 
     def refresh_sessions_for_account(self, keep_selection: bool = True) -> None:
                 previous = self.active_session_id if keep_selection else None
+                self.refresh_project_catalog()
                 self.sessions = load_sessions(
                     self.config,
                     session_aliases=self.session_aliases,
@@ -243,12 +448,21 @@ class WindowSessionMixin:
 
     def update_session_action_buttons(self) -> None:
                 has_session = bool(self.active_session_id)
-                self.copy_resume_button.setEnabled(has_session)
-                self.rename_session_button.setEnabled(has_session)
-                self.copy_session_id_button.setEnabled(has_session)
-                self.open_session_file_button.setEnabled(has_session and bool(find_session_file(self.config.codex_home, self.active_session_id)))
-                self.clear_session_alias_button.setEnabled(has_session and self.active_session_id in self.session_aliases)
+                self.session_more_button.setEnabled(True)
+                self.rename_session_action.setEnabled(has_session)
+                self.copy_session_id_action.setEnabled(has_session)
+                self.copy_resume_action.setEnabled(has_session)
+                self.open_session_file_action.setEnabled(
+                    has_session
+                    and bool(find_session_file(self.config.codex_home, self.active_session_id))
+                )
+                self.edit_work_dir_action.setEnabled(True)
+                self.clear_session_alias_action.setEnabled(
+                    has_session and self.active_session_id in self.session_aliases
+                )
                 self.permission_combo.setEnabled(True)
+                self.model_combo.setEnabled(True)
+                self.reasoning_combo.setEnabled(True)
 
     def permission_preset_for_config(self) -> str:
                 return permission_preset_from_runtime(self.config.approval_policy, self.config.sandbox_mode)

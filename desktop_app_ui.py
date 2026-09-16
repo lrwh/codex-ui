@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -214,8 +215,9 @@ class ModelSelectionDialog(QDialog):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self.window = window
-        self.selected_model = window.config.model
-        self.selected_reasoning_effort = window.config.model_reasoning_effort
+        current_model, current_effort = window.current_model_settings()
+        self.selected_model = current_model
+        self.selected_reasoning_effort = current_effort
         self.setObjectName("accountDialog")
         self.setWindowTitle("选择模型")
         self.setModal(True)
@@ -236,8 +238,8 @@ class ModelSelectionDialog(QDialog):
         self.model_list.setObjectName("sessionList")
         self.model_list.setFrameShape(QFrame.NoFrame)
         self.model_list.setSpacing(4)
-        current = (window.config.model or "").strip()
-        for model in model_choices(current):
+        current = (current_model or "").strip()
+        for model in model_choices(current, window.config.codex_home):
             label = "默认（Codex CLI 配置）" if not model else model
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, model)
@@ -260,7 +262,7 @@ class ModelSelectionDialog(QDialog):
         effort_label.setObjectName("cardMeta")
         self.reasoning_effort_combo = QComboBox()
         self.reasoning_effort_combo.setObjectName("searchInput")
-        current_effort = normalize_reasoning_effort(window.config.model_reasoning_effort)
+        current_effort = normalize_reasoning_effort(current_effort)
         for label, value in DEFAULT_REASONING_EFFORT_CHOICES:
             item_label = "默认（Codex CLI 配置）" if not value else label
             self.reasoning_effort_combo.addItem(item_label, value)
@@ -528,14 +530,73 @@ class SettingsDialog(QDialog):
         self.accept()
 
 class SessionGroupHeader(QFrame):
-    def __init__(self, title: str) -> None:
+    GROUP_ICONS = {
+        "置顶": ("emblem-favorite", "◆"),
+        "项目": ("folder", "□"),
+        "今天": ("view-calendar-day", "●"),
+        "昨天": ("go-previous", "‹"),
+        "本周": ("view-calendar-week", "▦"),
+        "历史": ("document-open-recent", "◴"),
+    }
+
+    def __init__(
+        self,
+        title: str,
+        group_key: str = "",
+        collapsible: bool = False,
+        collapsed: bool = False,
+    ) -> None:
         super().__init__()
         self.setObjectName("sessionGroupHeader")
+        self.setProperty("collapsible", collapsible)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 2)
+        layout.setContentsMargins(6, 7, 6, 1)
+        layout.setSpacing(6)
+        icon_name, fallback = self.GROUP_ICONS.get(group_key, ("", ""))
+        if icon_name or fallback:
+            icon_label = QLabel()
+            icon_label.setObjectName("sessionGroupIcon")
+            icon = QIcon.fromTheme(icon_name) if icon_name else QIcon()
+            if icon.isNull():
+                icon_label.setText(fallback)
+            else:
+                icon_label.setPixmap(icon.pixmap(12, 12))
+            layout.addWidget(icon_label, 0, Qt.AlignVCenter)
         label = QLabel(title)
         label.setObjectName("sessionGroupTitle")
-        layout.addWidget(label)
+        layout.addWidget(label, 1)
+        if collapsible:
+            caret = QLabel("›" if collapsed else "⌄")
+            caret.setObjectName("sessionGroupCaret")
+            layout.addWidget(caret, 0)
+
+
+class ProjectGroupHeader(QFrame):
+    def __init__(self, title: str, project_root: str, collapsed: bool, selected: bool) -> None:
+        super().__init__()
+        self.setObjectName("projectGroupHeader")
+        self.setProperty("selected", selected)
+        self.setToolTip(project_root)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 7, 6, 4)
+        layout.setSpacing(6)
+
+        folder = QLabel()
+        folder.setPixmap(self.style().standardIcon(QStyle.SP_DirIcon).pixmap(14, 14))
+        caret = QLabel("›" if collapsed else "⌄")
+        caret.setObjectName("projectCaret")
+        label = QLabel(truncate_text(title, 21))
+        label.setObjectName("projectGroupTitle")
+
+        layout.addWidget(folder, 0)
+        layout.addWidget(label, 1)
+        layout.addWidget(caret, 0)
+
+    def set_selected(self, selected: bool) -> None:
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
 
 class SessionListItem(QFrame):
@@ -546,43 +607,72 @@ class SessionListItem(QFrame):
         query: str = "",
         running: bool = False,
         unread: bool = False,
+        compact: bool = False,
     ) -> None:
         super().__init__()
         self.setObjectName("sessionCard")
         self.setProperty("selected", selected)
+        self.setProperty("compact", compact)
+
+        if compact:
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(20, 4, 8, 4)
+            layout.setSpacing(6)
+            if running or unread:
+                dot = QLabel("●")
+                dot.setObjectName("sessionDot")
+                dot.setProperty("selected", selected)
+                dot.setProperty("state", "running" if running else "unread")
+                layout.addWidget(dot, 0)
+            title = QLabel(highlight_match(truncate_text(session.thread_name, 25), query))
+            title.setObjectName("sessionTitle")
+            title.setTextFormat(Qt.RichText)
+            layout.addWidget(title, 1)
+            return
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(4)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(2)
 
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(8)
+        top_row.setSpacing(6)
 
         dot = QLabel("●")
         dot.setObjectName("sessionDot")
         dot.setProperty("selected", selected)
         dot.setProperty("state", "running" if running else ("unread" if unread else ""))
 
-        short_id = session.session_id[:8]
-        title = QLabel(highlight_match(truncate_text(session.thread_name, 18), query))
+        title = QLabel(highlight_match(truncate_text(session.thread_name, 22), query))
         title.setObjectName("sessionTitle")
         title.setWordWrap(False)
         title.setTextFormat(Qt.RichText)
 
         top_row.addWidget(dot, 0, Qt.AlignTop)
         top_row.addWidget(title, 1)
-        meta_prefix = ""
+        meta_text = ""
         if running:
-            meta_prefix = "<span style='color:#225e52;font-weight:700;'>运行中</span> · "
+            meta_text = "<span style='color:#225e52;font-weight:700;'>运行中</span>"
         elif unread:
-            meta_prefix = "<span style='color:#b26a2e;font-weight:700;'>未读</span> · "
-        meta = QLabel(f"{meta_prefix}{session.updated_at} · {highlight_match(short_id, query)}")
-        meta.setObjectName("sessionMeta")
-        meta.setTextFormat(Qt.RichText)
+            meta_text = "<span style='color:#b26a2e;font-weight:700;'>未读</span>"
 
         layout.addLayout(top_row)
-        layout.addWidget(meta)
+        if meta_text:
+            time_label = session_list_time_label(session.updated_at_raw, session.updated_at)
+            meta = QLabel(f"{meta_text} · {html.escape(time_label)}")
+            meta.setObjectName("sessionMeta")
+            meta.setTextFormat(Qt.RichText)
+            layout.addWidget(meta)
+
+    def set_selected(self, selected: bool) -> None:
+        self.setProperty("selected", selected)
+        for dot in self.findChildren(QLabel, "sessionDot"):
+            dot.setProperty("selected", selected)
+            dot.style().unpolish(dot)
+            dot.style().polish(dot)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
 
 class MessageBubble(QFrame):
@@ -597,9 +687,14 @@ class MessageBubble(QFrame):
         bubble_layout = QVBoxLayout(bubble)
         bubble_layout.setContentsMargins(16, 12, 16, 12)
         bubble_layout.setSpacing(6)
-        bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        bubble.setMaximumWidth(920)
-        bubble.setMinimumWidth(700 if message.role == "assistant" else 520)
+        if message.role == "assistant":
+            bubble.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            bubble.setMaximumWidth(1240)
+            bubble.setMinimumWidth(640)
+        else:
+            bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            bubble.setMaximumWidth(1040)
+            bubble.setMinimumWidth(480)
 
         header = QLabel(("你" if message.role == "user" else "Codex") + f"  {message.timestamp}")
         header.setObjectName("bubbleHeader")
@@ -619,8 +714,7 @@ class MessageBubble(QFrame):
             root.addStretch(1)
             root.addWidget(bubble, 0)
         else:
-            root.addWidget(bubble, 0)
-            root.addStretch(1)
+            root.addWidget(bubble, 1)
         bubble.setObjectName("bubbleCardUser" if message.role == "user" else "bubbleCardAssistant")
 
     def update_text(self, text: str) -> None:

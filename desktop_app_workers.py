@@ -68,6 +68,8 @@ class CodexWorker(QThread):
         prompt: str,
         image_paths: list[str] | None = None,
         work_dir: Path | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -75,6 +77,10 @@ class CodexWorker(QThread):
         self.prompt = prompt
         self.image_paths = image_paths or []
         self.work_dir = work_dir or config.work_dir
+        self.model = config.model if model is None else model
+        self.reasoning_effort = (
+            config.model_reasoning_effort if reasoning_effort is None else reasoning_effort
+        )
         self.proc: subprocess.Popen[str] | None = None
 
     def stop(self) -> None:
@@ -112,10 +118,10 @@ class CodexWorker(QThread):
             args.extend(["--sandbox", self.config.sandbox_mode])
         if self.config.skip_git_repo_check:
             args.append("--skip-git-repo-check")
-        if self.config.model:
-            args.extend(["-m", self.config.model])
-        if self.config.model_reasoning_effort:
-            args.extend(["-c", f'model_reasoning_effort="{self.config.model_reasoning_effort}"'])
+        if self.model:
+            args.extend(["-m", self.model])
+        if self.reasoning_effort:
+            args.extend(["-c", f'model_reasoning_effort="{self.reasoning_effort}"'])
         if self.session_id:
             args.append("resume")
             for image_path in self.image_paths:
