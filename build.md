@@ -38,13 +38,13 @@ bash scripts/package_deb.sh
 默认产物：
 
 ```text
-release/codex-ui_0.1.0_amd64.deb
+release/codex-ui_0.4.0_amd64.deb
 ```
 
 如需覆盖版本号：
 
 ```bash
-VERSION=0.1.1 bash scripts/package_deb.sh
+VERSION=0.4.0 bash scripts/package_deb.sh
 ```
 
 ## 构建结果验证
@@ -52,13 +52,13 @@ VERSION=0.1.1 bash scripts/package_deb.sh
 查看 `.deb` 控制信息：
 
 ```bash
-dpkg-deb -I release/codex-ui_0.1.0_amd64.deb
+dpkg-deb -I release/codex-ui_0.4.0_amd64.deb
 ```
 
 查看包内文件：
 
 ```bash
-dpkg-deb -c release/codex-ui_0.1.0_amd64.deb
+dpkg-deb -c release/codex-ui_0.4.0_amd64.deb
 ```
 
 离屏启动验证：

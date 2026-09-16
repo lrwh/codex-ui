@@ -275,6 +275,7 @@ class WindowAccountMixin:
                             thread_name=latest_title,
                             updated_at=latest_label,
                             updated_at_raw=latest_raw,
+                            cwd=str(self.current_effective_work_dir()),
                         )
                     )
 

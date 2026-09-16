@@ -222,6 +222,12 @@ class WindowCommonMixin:
                 override = (self.session_work_dir_overrides.get(self.active_session_id) or "").strip()
                 if override:
                     return Path(override).expanduser()
+                summary = next(
+                    (session for session in self.sessions if session.session_id == self.active_session_id),
+                    None,
+                )
+                if summary and summary.cwd:
+                    return Path(summary.cwd).expanduser()
                 session_cwd = load_session_cwd(self.config.codex_home, self.active_session_id)
                 if session_cwd:
                     return Path(session_cwd).expanduser()
@@ -236,7 +242,13 @@ class WindowCommonMixin:
     def set_current_work_dir_override(self, work_dir: Path) -> None:
                 work_dir = work_dir.expanduser().resolve()
                 if self.active_session_id:
-                    source_cwd = load_session_cwd(self.config.codex_home, self.active_session_id)
+                    summary = next(
+                        (session for session in self.sessions if session.session_id == self.active_session_id),
+                        None,
+                    )
+                    source_cwd = summary.cwd if summary and summary.cwd else ""
+                    if not source_cwd:
+                        source_cwd = load_session_cwd(self.config.codex_home, self.active_session_id)
                     fallback = Path(source_cwd).expanduser() if source_cwd else self.config.work_dir
                     if work_dir == fallback:
                         self.session_work_dir_overrides.pop(self.active_session_id, None)
@@ -247,6 +259,8 @@ class WindowCommonMixin:
                     self.new_session_work_dir = work_dir
                     self.new_session_work_dir_overridden = work_dir != self.config.work_dir
                 self.update_work_dir_label()
+                if self.session_scope == "all":
+                    self.refresh_session_list()
 
     def edit_current_work_dir(self) -> None:
                 current = str(self.current_effective_work_dir())
@@ -275,7 +289,7 @@ class WindowCommonMixin:
                 if hasattr(self, "status_clear_timer"):
                     self.status_clear_timer.stop()
                 self.status_label.setText(compact)
-                tone = "failure" if any(token in compact for token in ("失败", "错误")) else "success"
+                tone = "failure" if any(token in compact for token in ("失败", "错误", "已下线")) else "success"
                 self.status_label.setProperty("tone", tone if compact else "")
                 self.status_label.style().unpolish(self.status_label)
                 self.status_label.style().polish(self.status_label)

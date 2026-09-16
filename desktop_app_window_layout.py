@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -117,34 +118,25 @@ class WindowLayoutMixin:
 
                 section_label = QLabel("会话")
                 section_label.setObjectName("sidebarSection")
-
-                scope_row = QHBoxLayout()
-                scope_row.setContentsMargins(0, 0, 0, 0)
-                scope_row.setSpacing(8)
-                self.scope_all_button = QPushButton("全部")
-                self.scope_all_button.setObjectName("scopeButton")
-                self.scope_all_button.clicked.connect(lambda: self.set_session_scope("all"))
-                self.scope_pinned_button = QPushButton("置顶")
-                self.scope_pinned_button.setObjectName("scopeButton")
-                self.scope_pinned_button.clicked.connect(lambda: self.set_session_scope("pinned"))
-                self.scope_recent_button = QPushButton("最近7天")
-                self.scope_recent_button.setObjectName("scopeButton")
-                self.scope_recent_button.clicked.connect(lambda: self.set_session_scope("recent"))
-                scope_row.addWidget(self.scope_all_button, 0)
-                scope_row.addWidget(self.scope_pinned_button, 0)
-                scope_row.addWidget(self.scope_recent_button, 0)
-                scope_row.addStretch(1)
+                section_row = QHBoxLayout()
+                section_row.setContentsMargins(0, 0, 0, 0)
+                section_row.addWidget(section_label, 0)
+                section_row.addStretch(1)
+                self.create_project_button = QPushButton("新建项目")
+                self.create_project_button.setObjectName("scopeButton")
+                self.create_project_button.clicked.connect(self.create_project)
+                section_row.addWidget(self.create_project_button, 0)
 
                 self.search = QLineEdit()
                 self.search.setObjectName("searchInput")
-                self.search.setPlaceholderText("搜索标题或 ID")
+                self.search.setPlaceholderText("搜索项目、标题或 ID")
                 self.search.textChanged.connect(self.on_search)
                 self.session_list = QListWidget()
                 self.session_list.setObjectName("sessionList")
-                self.session_list.currentRowChanged.connect(self.on_session_selected)
                 self.session_list.itemClicked.connect(self.on_session_item_clicked)
+                self.session_list.itemActivated.connect(self.on_session_item_clicked)
                 self.session_list.setFrameShape(QFrame.NoFrame)
-                self.session_list.setSpacing(4)
+                self.session_list.setSpacing(1)
                 self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
                 self.session_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
                 self.session_list.setVerticalScrollMode(QListWidget.ScrollPerPixel)
@@ -156,8 +148,7 @@ class WindowLayoutMixin:
                 layout.addWidget(self.account_label)
                 layout.addLayout(account_action_row)
                 layout.addSpacing(4)
-                layout.addWidget(section_label)
-                layout.addLayout(scope_row)
+                layout.addLayout(section_row)
                 layout.addWidget(self.search)
                 layout.addWidget(self.session_list, 1)
                 layout.addWidget(self.load_more_button, 0, Qt.AlignLeft)
@@ -203,48 +194,35 @@ class WindowLayoutMixin:
                 self.header_meta.setObjectName("cardMeta")
                 self.header_status = QLabel("idle")
                 self.header_status.setObjectName("statusChip")
-                self.rename_session_button = self.make_scope_button("重命名", self.rename_current_session)
-                self.copy_session_id_button = self.make_scope_button("复制 ID", self.copy_current_session_id)
-                self.open_session_file_button = self.make_scope_button("打开文件", self.open_current_session_file)
-                self.clear_session_alias_button = self.make_scope_button("清本地别名", self.clear_current_session_alias)
-                self.edit_work_dir_button = self.make_scope_button("改路径", self.edit_current_work_dir)
                 self.pin_button = QPushButton("置顶")
                 self.pin_button.setObjectName("pinButton")
                 self.pin_button.clicked.connect(self.toggle_pin_active_session)
-                session_action_row = QHBoxLayout()
-                session_action_row.setContentsMargins(0, 0, 0, 0)
-                session_action_row.setSpacing(8)
-                session_action_row.addWidget(self.rename_session_button, 0)
-                session_action_row.addWidget(self.copy_session_id_button, 0)
-                session_action_row.addWidget(self.open_session_file_button, 0)
-                session_action_row.addWidget(self.clear_session_alias_button, 0)
-                session_action_row.addWidget(self.edit_work_dir_button, 0)
+                self.session_more_button = QPushButton("更多")
+                self.session_more_button.setObjectName("moreButton")
+                self.session_more_menu = QMenu(self.session_more_button)
+                self.rename_session_action = self.session_more_menu.addAction("重命名", self.rename_current_session)
+                self.copy_session_id_action = self.session_more_menu.addAction("复制会话 ID", self.copy_current_session_id)
+                self.copy_resume_action = self.session_more_menu.addAction("复制恢复命令", self.copy_resume_command)
+                self.open_session_file_action = self.session_more_menu.addAction("打开会话文件", self.open_current_session_file)
+                self.edit_work_dir_action = self.session_more_menu.addAction("修改工作目录", self.edit_current_work_dir)
+                self.clear_session_alias_action = self.session_more_menu.addAction("清除本地别名", self.clear_current_session_alias)
+                self.session_more_button.setMenu(self.session_more_menu)
                 header_row = QHBoxLayout()
                 header_row.setContentsMargins(0, 0, 0, 0)
                 header_row.setSpacing(10)
                 header_row.addWidget(self.work_dir_label, 0)
-                header_row.addLayout(session_action_row, 0)
                 header_row.addStretch(1)
-                header_row.addWidget(self.pin_button, 0)
-                header_row.addWidget(self.header_meta, 0)
-                header_row.addWidget(self.header_status, 0, Qt.AlignRight)
                 self.header_title_row.insertWidget(1, self.header_title, 0)
+                self.header_title_row.addWidget(self.pin_button, 0)
+                self.header_title_row.addWidget(self.session_more_button, 0)
+                self.header_title_row.addWidget(self.header_meta, 0)
+                self.header_title_row.addWidget(self.header_status, 0, Qt.AlignRight)
                 self.header_card.layout().addLayout(header_row)
-                self.resume_command = QLineEdit()
+                self.resume_command = QLineEdit(self.header_card)
                 self.resume_command.setObjectName("resumeCommand")
                 self.resume_command.setReadOnly(True)
                 self.resume_command.setFocusPolicy(Qt.ClickFocus)
-                self.copy_resume_button = QPushButton("复制")
-                self.copy_resume_button.setObjectName("copyButton")
-                self.copy_resume_button.clicked.connect(self.copy_resume_command)
-                resume_hint = QLabel("手动恢复")
-                resume_hint.setObjectName("cardMeta")
-                resume_row = QHBoxLayout()
-                resume_row.setContentsMargins(0, 0, 0, 0)
-                resume_row.setSpacing(8)
-                resume_row.addWidget(resume_hint, 0)
-                resume_row.addWidget(self.resume_command, 1)
-                resume_row.addWidget(self.copy_resume_button, 0)
+                self.resume_command.hide()
                 self.permission_combo = QComboBox()
                 self.permission_combo.setObjectName("permissionSelect")
                 self.permission_combo.addItem("工作区", "workspace")
@@ -252,11 +230,24 @@ class WindowLayoutMixin:
                 self.permission_combo.addItem("全权限", "full")
                 self.permission_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
                 self.permission_combo.setMinimumContentsLength(6)
-                self.permission_combo.setFixedWidth(132)
+                self.permission_combo.setFixedWidth(112)
                 self.permission_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
                 self.permission_combo.currentIndexChanged.connect(self.on_permission_preset_changed)
-                self.header_card.layout().addLayout(resume_row)
-
+                self.model_combo = QComboBox()
+                self.model_combo.setObjectName("modelSelect")
+                self.model_combo.setFixedWidth(182)
+                self.model_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                self.model_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                for model in model_choices(self.config.model, self.config.codex_home):
+                    self.model_combo.addItem("CLI 默认" if not model else model, model)
+                self.model_combo.currentIndexChanged.connect(self.on_model_selector_changed)
+                self.reasoning_combo = QComboBox()
+                self.reasoning_combo.setObjectName("modelSelect")
+                self.reasoning_combo.setFixedWidth(96)
+                self.reasoning_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                for label, value in DEFAULT_REASONING_EFFORT_CHOICES:
+                    self.reasoning_combo.addItem(label, value)
+                self.reasoning_combo.currentIndexChanged.connect(self.on_model_selector_changed)
                 self.conversation_panel = QFrame()
                 self.conversation_panel.setObjectName("conversationPanel")
                 self.conversation_panel.setMinimumHeight(0)
@@ -300,8 +291,8 @@ class WindowLayoutMixin:
                 divider.setFixedHeight(1)
 
                 self.input_card = self.make_card("输入", "inputCard")
-                self.input_card.setMinimumHeight(264)
-                self.input_card.setMaximumHeight(340)
+                self.input_card.setMinimumHeight(250)
+                self.input_card.setMaximumHeight(330)
                 self.input_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
                 self.request_state_label = QLabel("")
                 self.request_state_label.setObjectName("requestStateIdle")
@@ -326,7 +317,7 @@ class WindowLayoutMixin:
                 self.input_box.setPlaceholderText("输入提示词，继续当前会话或直接开启新话题")
                 self.input_box.setAttribute(Qt.WA_InputMethodEnabled, True)
                 self.input_box.setInputMethodHints(Qt.ImhMultiLine)
-                self.input_box.setFixedHeight(120)
+                self.input_box.setFixedHeight(136)
                 self.input_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
                 self.input_box.command_requested.connect(self.send_prompt)
                 self.input_box.attachments_pasted.connect(self.add_pasted_attachments)
@@ -334,17 +325,18 @@ class WindowLayoutMixin:
                 template_row = QHBoxLayout()
                 template_row.setContentsMargins(0, 0, 0, 0)
                 template_row.setSpacing(8)
-                template_label = QLabel("快捷指令")
-                template_label.setObjectName("cardMeta")
-                template_row.addWidget(template_label, 0)
                 self.add_attachment_button = self.make_scope_button("添加附件", self.pick_attachments)
                 template_row.addWidget(self.add_attachment_button, 0)
+                self.prompt_menu_button = QPushButton("快捷指令")
+                self.prompt_menu_button.setObjectName("scopeButton")
+                self.prompt_menu = QMenu(self.prompt_menu_button)
                 for label, template in self.prompt_templates:
-                    button = self.make_scope_button(
-                        label,
+                    action = self.prompt_menu.addAction(label)
+                    action.triggered.connect(
                         lambda _checked=False, content=template: self.insert_prompt_template(content)
                     )
-                    template_row.addWidget(button, 0)
+                self.prompt_menu_button.setMenu(self.prompt_menu)
+                template_row.addWidget(self.prompt_menu_button, 0)
                 template_row.addStretch(1)
                 attachment_row = QHBoxLayout()
                 attachment_row.setContentsMargins(0, 0, 0, 0)
@@ -372,9 +364,17 @@ class WindowLayoutMixin:
                 self.new_button.clicked.connect(self.new_session)
                 permission_label = QLabel("权限")
                 permission_label.setObjectName("cardMeta")
+                model_label = QLabel("模型")
+                model_label.setObjectName("cardMeta")
+                reasoning_label = QLabel("推理")
+                reasoning_label.setObjectName("cardMeta")
                 button_row = QHBoxLayout()
                 button_row.setContentsMargins(0, 0, 0, 0)
-                button_row.setSpacing(10)
+                button_row.setSpacing(8)
+                button_row.addWidget(model_label, 0)
+                button_row.addWidget(self.model_combo, 0)
+                button_row.addWidget(reasoning_label, 0)
+                button_row.addWidget(self.reasoning_combo, 0)
                 button_row.addWidget(permission_label, 0)
                 button_row.addWidget(self.permission_combo, 0)
                 button_row.addStretch(1)
@@ -396,11 +396,11 @@ class WindowLayoutMixin:
                 self.status_card = QFrame()
                 self.status_card.setObjectName("statusBar")
                 status_layout = QHBoxLayout(self.status_card)
-                status_layout.setContentsMargins(14, 10, 14, 10)
+                status_layout.setContentsMargins(8, 6, 8, 4)
                 status_layout.setSpacing(14)
                 self.usage_label = QLabel("in 0 · cache 0 · out 0")
                 self.usage_label.setObjectName("cardMeta")
-                self.help_label = QLabel("搜索 /  /model 选模型/推理  ·  Ctrl+Enter 发送  ·  Ctrl+N 新会话")
+                self.help_label = QLabel("搜索 /  ·  Ctrl+Enter 发送  ·  Ctrl+N 新会话")
                 self.help_label.setObjectName("cardMeta")
                 status_layout.addWidget(self.usage_label, 0)
                 status_layout.addStretch(1)
@@ -425,13 +425,13 @@ class WindowLayoutMixin:
                 card.setObjectName(object_name)
                 layout = QVBoxLayout(card)
                 if object_name == "headerCard":
-                    layout.setContentsMargins(14, 8, 14, 10)
-                    layout.setSpacing(4)
+                    layout.setContentsMargins(8, 6, 8, 8)
+                    layout.setSpacing(3)
                 elif object_name == "inputCard":
-                    layout.setContentsMargins(14, 8, 14, 6)
+                    layout.setContentsMargins(8, 8, 8, 6)
                     layout.setSpacing(6)
                 else:
-                    layout.setContentsMargins(14, 12, 14, 12)
+                    layout.setContentsMargins(8, 8, 8, 8)
                     layout.setSpacing(8)
                 if object_name == "headerCard":
                     title_row = QHBoxLayout()
@@ -481,12 +481,12 @@ class WindowLayoutMixin:
                 self.setStyleSheet(
                     """
                     QMainWindow, QWidget#page {
-                      background: #fcfbf8;
-                      color: #2f241c;
+                      background: #fbfaf7;
+                      color: #202923;
                     }
                     QDialog#accountDialog {
-                      background: #fcfbf8;
-                      color: #2f241c;
+                      background: #fbfaf7;
+                      color: #202923;
                     }
                     QWidget#contentInner {
                       background: transparent;
@@ -497,15 +497,15 @@ class WindowLayoutMixin:
                     QLabel#pageTitle {
                       font-size: 19px;
                       font-weight: 800;
-                      color: #2f261f;
+                      color: #1f2823;
                     }
                     QLabel#pageSubtitle {
-                      color: #86715d;
+                      color: #68736d;
                       font-size: 14px;
                     }
                     QFrame#sidebar {
-                      background: #fffdfa;
-                      border-right: 1px solid #eadfce;
+                      background: #f7f8f5;
+                      border-right: 1px solid #e4ddd3;
                     }
                     QLabel#sidebarBadge {
                       min-width: 36px;
@@ -522,15 +522,15 @@ class WindowLayoutMixin:
                     QLabel#sidebarTitle {
                       font-size: 18px;
                       font-weight: 800;
-                      color: #241d17;
+                      color: #1f2823;
                     }
                     QLabel#sidebarMeta {
-                      color: #8a7561;
+                      color: #7b6f65;
                       font-size: 12px;
                       font-weight: 600;
                     }
                     QLabel#sidebarPath {
-                      color: #9b8671;
+                      color: #968678;
                       font-size: 11px;
                     }
                     QLabel#sidebarAccount {
@@ -539,20 +539,21 @@ class WindowLayoutMixin:
                       font-weight: 600;
                     }
                     QLabel#sidebarHint {
-                      color: #8f7b67;
+                      color: #827469;
                       font-size: 11px;
                     }
                     QPushButton#scopeButton {
-                      background: #eef5f1;
-                      color: #2f7b68;
-                      border: 1px solid #d9e8e1;
-                      border-radius: 10px;
+                      background: transparent;
+                      color: #52605a;
+                      border: 1px solid #dfe5e1;
+                      border-radius: 9px;
                       padding: 4px 9px;
                       font-size: 11px;
-                      font-weight: 700;
+                      font-weight: 600;
                     }
                     QPushButton#scopeButton:hover {
-                      background: #e6f1ec;
+                      background: #edf4f0;
+                      color: #276b5a;
                     }
                     QPushButton#scopeButton[selected="true"] {
                       background: #2f7b68;
@@ -560,30 +561,30 @@ class WindowLayoutMixin:
                       border-color: #2f7b68;
                     }
                     QLabel#sidebarSection {
-                      color: #bc6f2f;
-                      font-size: 13px;
+                      color: #bd642d;
+                      font-size: 12px;
                       font-weight: 700;
                     }
                     QFrame#accountCard {
-                      background: #fffaf4;
-                      border: 1px solid #eadfce;
+                      background: #ffffff;
+                      border: 1px solid #dde3df;
                       border-radius: 12px;
                     }
                     QFrame#accountCard[active="true"] {
-                      background: #f6efe2;
-                      border-color: #d9c7ae;
+                      background: #e9f0ec;
+                      border-color: #cbdad2;
                     }
                     QLabel#accountTitle {
-                      color: #2c241d;
+                      color: #253029;
                       font-size: 12px;
                       font-weight: 700;
                     }
                     QLabel#accountMeta {
-                      color: #8d7763;
+                      color: #758079;
                       font-size: 10px;
                     }
                     QLabel#accountUsage {
-                      color: #6f5b49;
+                      color: #59655e;
                       font-size: 10px;
                     }
                     QPushButton#accountSwitchButton {
@@ -600,8 +601,8 @@ class WindowLayoutMixin:
                       background: #e4f0ea;
                     }
                     QPushButton#accountCurrentButton {
-                      background: #efe5d7;
-                      color: #8a613a;
+                      background: #e5ece8;
+                      color: #466258;
                       border: none;
                       border-radius: 10px;
                       padding: 4px 10px;
@@ -610,14 +611,14 @@ class WindowLayoutMixin:
                       min-width: 44px;
                     }
                     QLineEdit#searchInput {
-                      border: 1px solid #e1d3c2;
+                      border: 1px solid #ddd4c8;
                       border-radius: 12px;
                       padding: 7px 10px;
                       background: white;
-                      color: #3b2f26;
+                      color: #29332e;
                     }
                     QLineEdit#searchInput:focus {
-                      border: 1px solid #d28a4a;
+                      border: 1px solid #b77a4c;
                     }
                     QListWidget#sessionList {
                       background: transparent;
@@ -635,7 +636,7 @@ class WindowLayoutMixin:
                       margin: 6px 0 6px 0;
                     }
                     QScrollBar::handle:vertical {
-                      background: #dbcbb8;
+                      background: #d7c7b5;
                       border-radius: 4px;
                       min-height: 24px;
                     }
@@ -650,31 +651,65 @@ class WindowLayoutMixin:
                     QFrame#sessionGroupHeader {
                       background: transparent;
                       border: none;
+                      border-radius: 8px;
+                    }
+                    QFrame#sessionGroupHeader[collapsible="true"]:hover {
+                      background: #eaf0ed;
+                    }
+                    QLabel#sessionGroupCaret {
+                      color: #69756e;
+                      font-size: 12px;
+                    }
+                    QLabel#sessionGroupIcon {
+                      color: #5e756b;
+                      font-size: 10px;
+                      min-width: 13px;
+                      max-width: 13px;
+                    }
+                    QFrame#projectGroupHeader {
+                      background: transparent;
+                      border: none;
+                      border-radius: 10px;
+                    }
+                    QFrame#projectGroupHeader[selected="true"] {
+                      background: #e4ece8;
+                    }
+                    QFrame#projectGroupHeader:hover {
+                      background: #eaf0ed;
+                    }
+                    QLabel#projectCaret {
+                      color: #69756e;
+                      font-size: 12px;
+                    }
+                    QLabel#projectGroupTitle {
+                      color: #344139;
+                      font-size: 12px;
+                      font-weight: 700;
                     }
                     QLabel#sessionGroupTitle {
-                      color: #a78363;
+                      color: #8a7561;
                       font-size: 11px;
                       font-weight: 700;
                       letter-spacing: 1px;
                     }
                     QFrame#sessionCard[selected="true"] {
-                      background: #f7efe2;
+                      background: #e7f0eb;
                       border-left: 3px solid #2f7b68;
                     }
                     QFrame#sessionCard:hover {
-                      background: #faf4eb;
+                      background: #eef3f0;
                     }
                     QLabel#sessionTitle {
-                      font-size: 13px;
-                      font-weight: 800;
-                      color: #2c241d;
+                      font-size: 12px;
+                      font-weight: 700;
+                      color: #26312b;
                     }
                     QLabel#sessionMeta {
-                      font-size: 11px;
-                      color: #8d7763;
+                      font-size: 10px;
+                      color: #758079;
                     }
                     QLabel#sessionDot {
-                      color: #d7bf9b;
+                      color: #b9c2bd;
                       font-size: 11px;
                     }
                     QLabel#sessionDot[selected="true"] {
@@ -686,36 +721,47 @@ class WindowLayoutMixin:
                     QLabel#sessionDot[state="unread"] {
                       color: #c98235;
                     }
-                    QFrame#headerCard, QFrame#statusBar, QFrame#conversationPanel {
-                      background: #fffdfa;
-                      border: 1px solid #eadfce;
-                      border-radius: 18px;
+                    QFrame#headerCard {
+                      background: transparent;
+                      border: none;
+                      border-bottom: 1px solid #e7ded2;
+                      border-radius: 0px;
+                    }
+                    QFrame#conversationPanel {
+                      background: transparent;
+                      border: none;
+                    }
+                    QFrame#statusBar {
+                      background: transparent;
+                      border: none;
+                      border-top: 1px solid #e7ded2;
+                      border-radius: 0px;
                     }
                     QFrame#chatCard, QFrame#inputCard {
                       background: transparent;
                       border: none;
                     }
                     QFrame#conversationDivider {
-                      background: #efe3d2;
+                      background: #e7ded2;
                       border: none;
-                      margin: 0 14px 0 14px;
+                      margin: 0 8px 0 8px;
                     }
                     QLabel#cardTitle {
                       font-size: 12px;
                       font-weight: 700;
-                      color: #c7742f;
+                      color: #bd642d;
                     }
                     QLabel#cardHeadline {
                       font-size: 16px;
                       font-weight: 700;
-                      color: #2d241d;
+                      color: #202923;
                     }
                     QLabel#cardMeta {
-                      color: #7f6b59;
+                      color: #7f6f62;
                       font-size: 12px;
                     }
                     QLabel#cardMetaStrong {
-                      color: #5e4c3c;
+                      color: #5c4d40;
                       font-size: 15px;
                       font-weight: 600;
                     }
@@ -727,22 +773,52 @@ class WindowLayoutMixin:
                       font-weight: 700;
                     }
                     QPushButton#pinButton {
-                      background: #f6efe2;
-                      color: #8a613a;
-                      border: 1px solid #eadfce;
-                      border-radius: 11px;
+                      background: transparent;
+                      color: #5f665f;
+                      border: 1px solid #dfe3df;
+                      border-radius: 10px;
                       padding: 5px 10px;
-                      font-weight: 700;
+                      font-weight: 600;
                     }
                     QPushButton#pinButton:hover {
-                      background: #efe3d2;
+                      background: #f0f3f1;
                     }
                     QPushButton#pinButton:disabled {
-                      color: #b39a83;
-                      background: #faf6ef;
+                      color: #9ba59f;
+                      background: #f0f3f1;
+                    }
+                    QPushButton#moreButton {
+                      background: transparent;
+                      color: #5f665f;
+                      border: 1px solid #dfe3df;
+                      border-radius: 10px;
+                      padding: 5px 10px;
+                      font-size: 11px;
+                      font-weight: 600;
+                    }
+                    QPushButton#moreButton:hover {
+                      background: #f0f3f1;
+                    }
+                    QMenu {
+                      background: #ffffff;
+                      color: #303630;
+                      border: 1px solid #dde2dd;
+                      border-radius: 10px;
+                      padding: 6px;
+                    }
+                    QMenu::item {
+                      border-radius: 7px;
+                      padding: 7px 20px 7px 10px;
+                    }
+                    QMenu::item:selected {
+                      background: #eaf2ee;
+                      color: #245f51;
+                    }
+                    QMenu::item:disabled {
+                      color: #a7aaa7;
                     }
                     QLabel#requestStateIdle {
-                      color: #7f6b59;
+                      color: #7f6f62;
                       font-size: 12px;
                     }
                     QLabel#requestStateRunning {
@@ -764,62 +840,78 @@ class WindowLayoutMixin:
                       font-size: 11px;
                     }
                     QPushButton#retryButton {
-                      background: #f6efe2;
-                      color: #8a613a;
-                      border: 1px solid #eadfce;
+                      background: #e8eeea;
+                      color: #405149;
+                      border: 1px solid #d9e0dc;
                       border-radius: 10px;
                       padding: 5px 10px;
                       font-size: 11px;
                       font-weight: 700;
                     }
                     QPushButton#retryButton:hover {
-                      background: #efe3d2;
+                      background: #dfe8e3;
                     }
                     QPlainTextEdit#composerBox {
-                      border: 1px solid #e1d3c2;
+                      border: 1px solid #ddd4c8;
                       border-radius: 16px;
                       background: white;
                       padding: 10px;
                       min-height: 44px;
                     }
                     QLineEdit#resumeCommand {
-                      border: 1px solid #e1d3c2;
+                      border: 1px solid #ddd4c8;
                       border-radius: 12px;
-                      background: #fffaf4;
+                      background: #ffffff;
                       padding: 7px 10px;
-                      color: #4d3e31;
+                      color: #344139;
                       selection-background-color: #dfeee7;
                     }
                     QPushButton#copyButton {
-                      background: #efe5d7;
-                      color: #5b4a3c;
+                      background: #f1e8dc;
+                      color: #5c4d40;
                       border: none;
                       border-radius: 12px;
                       padding: 7px 14px;
                       font-weight: 700;
                     }
                     QPushButton#copyButton:hover {
-                      background: #e6dac8;
+                      background: #e9ddcd;
                     }
                     QComboBox#permissionSelect {
-                      border: 1px solid #e1d3c2;
+                      border: 1px solid #ddd4c8;
                       border-radius: 12px;
                       padding: 5px 10px;
                       min-width: 120px;
                       background: white;
-                      color: #3b2f26;
+                      color: #29332e;
                       font-size: 12px;
                       font-weight: 600;
                     }
                     QComboBox#permissionSelect:focus {
-                      border: 1px solid #d28a4a;
+                      border: 1px solid #b77a4c;
                     }
                     QComboBox#permissionSelect::drop-down {
                       border: none;
                       width: 22px;
                     }
+                    QComboBox#modelSelect {
+                      border: 1px solid #ddd4c8;
+                      border-radius: 12px;
+                      padding: 5px 10px;
+                      background: white;
+                      color: #29332e;
+                      font-size: 12px;
+                      font-weight: 600;
+                    }
+                    QComboBox#modelSelect:focus {
+                      border: 1px solid #b77a4c;
+                    }
+                    QComboBox#modelSelect::drop-down {
+                      border: none;
+                      width: 22px;
+                    }
                     QPlainTextEdit#composerBox:focus {
-                      border: 1px solid #d28a4a;
+                      border: 1px solid #b77a4c;
                     }
                     QPushButton#primaryButton {
                       background: #2f7b68;
@@ -847,8 +939,8 @@ class WindowLayoutMixin:
                       background: #fde9dd;
                     }
                     QPushButton#ghostButton {
-                      background: #efe5d7;
-                      color: #5b4a3c;
+                      background: #f1e8dc;
+                      color: #5c4d40;
                       border: none;
                       border-radius: 16px;
                       min-width: 72px;
@@ -858,23 +950,23 @@ class WindowLayoutMixin:
                       font-weight: 700;
                     }
                     QFrame#bubbleCardAssistant {
-                      background: white;
-                      border: 1px solid #eadfce;
+                      background: #ffffff;
+                      border: 1px solid #e7ddd0;
                       border-radius: 18px;
                     }
                     QFrame#bubbleCardUser {
                       background: #f8efe4;
-                      border: 1px solid #e4c9a5;
+                      border: 1px solid #e8cfb0;
                       border-radius: 18px;
                     }
                     QLabel#bubbleHeader {
-                      color: #8f7763;
+                      color: #8a7561;
                       font-size: 11px;
                       font-weight: 600;
                     }
                     QLabel#bubbleBody {
-                      color: #2f241c;
-                      font-size: 13px;
+                      color: #202923;
+                      font-size: 12px;
                       line-height: 1.6;
                     }
                     QLabel#statusText {

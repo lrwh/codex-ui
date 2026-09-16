@@ -79,7 +79,19 @@ class MainWindow(
                 self.pinned_session_ids = load_pinned_session_ids()
                 self.session_aliases = load_session_aliases()
                 self.session_work_dir_overrides = load_session_work_dir_overrides()
+                self.session_model_overrides = load_session_model_overrides()
+                self.projects = load_codex_projects(self.config.codex_home)
+                self.project_by_id = {project.project_id: project for project in self.projects}
+                self.session_project_ids = {
+                    session_id: project.project_id
+                    for project in self.projects
+                    for session_id in project.session_ids
+                }
+                self.new_session_model = self.config.model
+                self.new_session_reasoning_effort = self.config.model_reasoning_effort
                 self.session_scope = "all"
+                self.collapsed_session_groups = {"置顶", "本周", "历史"}
+                self.collapsed_project_ids = {project.project_id for project in self.projects}
                 self.session_page_size = 60
                 self.visible_session_limit = self.session_page_size
                 self.session_message_cache: dict[str, ConversationCacheEntry] = {}
@@ -96,6 +108,8 @@ class MainWindow(
                 self.sessions = load_sessions(self.config, session_aliases=self.session_aliases)
                 self.filtered_sessions = self.sessions[:]
                 self.active_session_id: str | None = self.sessions[0].session_id if self.sessions else None
+                active_project = self.session_project(self.sessions[0]) if self.sessions else None
+                self.selected_project_context_id = active_project.project_id if active_project else ""
                 self.worker: CodexWorker | None = None
                 self.workers: dict[str, CodexWorker] = {}
                 self.worker_key_aliases: dict[str, str] = {}
@@ -117,6 +131,7 @@ class MainWindow(
                 self.update_check_worker: ReleaseCheckWorker | None = None
                 self.new_session_work_dir = self.config.work_dir
                 self.new_session_work_dir_overridden = False
+                self.new_session_project_id = ""
                 self.status_clear_timer = QTimer(self)
                 self.status_clear_timer.setSingleShot(True)
                 self.status_clear_timer.timeout.connect(self.clear_status_text)
@@ -151,6 +166,7 @@ class MainWindow(
 
                 self.refresh_attachment_widgets()
                 self.update_permission_selector()
+                self.update_model_selectors()
                 self.apply_session_filters()
                 self.load_active_session(scroll_to_top=False)
                 self.setup_shortcuts()

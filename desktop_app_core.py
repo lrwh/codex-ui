@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
+import fcntl
 from queue import Empty, Queue
 from threading import Thread
 from datetime import datetime, timedelta
@@ -70,6 +72,7 @@ class SessionSummary:
     thread_name: str
     updated_at: str
     updated_at_raw: str
+    cwd: str = ""
 
 
 @dataclass
@@ -78,6 +81,17 @@ class SessionCandidate:
     thread_name: str
     updated_at_raw: str
     title_priority: int
+    cwd: str = ""
+
+
+@dataclass
+class CodexProject:
+    project_id: str
+    name: str
+    root_paths: list[str]
+    session_ids: list[str]
+    expanded: bool
+    selected: bool
 
 
 @dataclass
@@ -139,13 +153,22 @@ class ReleaseInfo:
     assets: list[ReleaseAssetInfo]
 
 
-DEFAULT_MODEL_CHOICES = ["", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"]
+DEFAULT_MODEL_CHOICES = [
+    "",
+    "gpt-6-astra",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+]
 DEFAULT_REASONING_EFFORT_CHOICES = [
     ("默认", ""),
     ("低", "low"),
     ("中", "medium"),
     ("高", "high"),
     ("极高", "xhigh"),
+    ("最大", "max"),
+    ("自动协作", "ultra"),
 ]
 
 
@@ -164,10 +187,35 @@ def model_display_name(model: str) -> str:
     return model
 
 
-def model_choices(current_model: str = "") -> list[str]:
-    choices = DEFAULT_MODEL_CHOICES[:]
+def is_retired_model(model: object) -> bool:
+    value = str(model or "").strip().lower()
+    match = re.match(r"^gpt-(\d+)\.(\d+)(?:\D|$)", value)
+    if not match:
+        return False
+    major, minor = int(match.group(1)), int(match.group(2))
+    return (major, minor) <= (5, 4)
+
+
+def model_choices(current_model: str = "", codex_home: Path | None = None) -> list[str]:
+    choices: list[str] = [""]
+    cache_path = (codex_home or (Path.home() / ".codex")) / "models_cache.json"
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        models = payload.get("models", [])
+        if isinstance(models, list):
+            for item in models:
+                if not isinstance(item, dict) or item.get("visibility") == "hide":
+                    continue
+                slug = str(item.get("slug") or "").strip()
+                if slug and not is_retired_model(slug) and slug not in choices:
+                    choices.append(slug)
+    except (OSError, json.JSONDecodeError):
+        pass
+    for model in DEFAULT_MODEL_CHOICES:
+        if model not in choices:
+            choices.append(model)
     current = (current_model or "").strip()
-    if current and current not in choices:
+    if current and not is_retired_model(current) and current not in choices:
         choices.insert(1, current)
     return choices
 
@@ -223,6 +271,8 @@ INITIAL_CONVERSATION_RENDER_LIMIT = 80
 CONVERSATION_RENDER_CHUNK_SIZE = 80
 MESSAGE_RENDER_BATCH_SIZE = 24
 _MERGED_SESSION_CANDIDATE_CACHE: dict[str, dict[str, "SessionCandidate"]] = {}
+_SESSION_FILE_PATH_CACHE: dict[tuple[str, str], Path] = {}
+_PROJECT_ROOT_CACHE: dict[str, str] = {}
 
 
 def app_base_dir() -> Path:
@@ -414,7 +464,7 @@ def highlight_match(text: str, query: str) -> str:
     start, end = match.span()
     return (
         f"{text[:start]}"
-        f"<span style='background-color:#efe2c8; color:#2c241d; border-radius:4px;'>{text[start:end]}</span>"
+        f"<span style='background-color:#efe1ca; color:#4d3927; border-radius:4px;'>{text[start:end]}</span>"
         f"{text[end:]}"
     )
 
@@ -422,14 +472,34 @@ def highlight_match(text: str, query: str) -> str:
 def session_group_label(raw: str) -> str:
     dt = parse_timestamp(raw)
     if not dt:
-        return "更早"
+        return "历史"
     local_date = dt.astimezone().date()
     today = datetime.now().astimezone().date()
     if local_date == today:
         return "今天"
     if (today - local_date).days == 1:
         return "昨天"
-    return "更早"
+    week_start = today - timedelta(days=today.weekday())
+    if week_start <= local_date < today:
+        return "本周"
+    return "历史"
+
+
+def session_list_time_label(raw: str, fallback: str = "") -> str:
+    dt = parse_timestamp(raw)
+    if not dt:
+        return fallback
+    local_dt = dt.astimezone()
+    today = datetime.now().astimezone().date()
+    if local_dt.date() in {today, today - timedelta(days=1)}:
+        return local_dt.strftime("%H:%M")
+    week_start = today - timedelta(days=today.weekday())
+    if week_start <= local_dt.date() < today:
+        weekdays = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+        return f"{weekdays[local_dt.weekday()]} {local_dt:%H:%M}"
+    if local_dt.year == today.year:
+        return local_dt.strftime("%m-%d")
+    return local_dt.strftime("%Y-%m-%d")
 
 
 def render_inline_markdown(text: str) -> str:
@@ -443,7 +513,7 @@ def render_inline_markdown(text: str) -> str:
         code_text, link_text, link_url, bold_text, italic_text = match.groups()
         if code_text is not None:
             parts.append(
-                "<code style='background:#f3e8d8; color:#734d2b; padding:1px 6px; "
+                "<code style='background:#f2e8d9; color:#744f32; padding:1px 6px; "
                 "border-radius:6px; font-family:monospace;'>"
                 f"{html.escape(code_text)}</code>"
             )
@@ -484,7 +554,7 @@ def render_markdown_html(text: str) -> str:
             if i < len(lines):
                 i += 1
             language_badge = (
-                f"<div style='color:#9a7b5d; font-size:11px; margin-bottom:6px;'>{html.escape(language)}</div>"
+                f"<div style='color:#8a7561; font-size:11px; margin-bottom:6px;'>{html.escape(language)}</div>"
                 if language
                 else ""
             )
@@ -492,9 +562,9 @@ def render_markdown_html(text: str) -> str:
                 "<div style='margin:8px 0;'>"
                 f"{language_badge}"
                 "<pre style='margin:0; white-space:pre-wrap; word-break:break-word; "
-                "background:#fff7eb; border:1px solid #ead9c2; border-radius:12px; padding:12px; "
-                "font-family:monospace; font-size:12px; "
-                "line-height:1.55; color:#3a2d23;'>"
+                "background:#f8f4ed; border:1px solid #e4d9c9; border-radius:12px; padding:12px; "
+                "font-family:monospace; font-size:11px; "
+                "line-height:1.55; color:#382e26;'>"
                 f"{html.escape(chr(10).join(code_lines))}</pre></div>"
             )
             continue
@@ -504,7 +574,7 @@ def render_markdown_html(text: str) -> str:
             level = len(heading.group(1))
             size_map = {1: 20, 2: 17, 3: 15, 4: 14}
             blocks.append(
-                f"<div style='margin:8px 0 4px 0; font-weight:700; color:#2f241c; "
+                f"<div style='margin:8px 0 4px 0; font-weight:700; color:#202923; "
                 f"font-size:{size_map.get(level, 14)}px;'>"
                 f"{render_inline_markdown(heading.group(2))}</div>"
             )
@@ -517,8 +587,8 @@ def render_markdown_html(text: str) -> str:
                 quote_lines.append(lines[i].strip()[1:].strip())
                 i += 1
             blocks.append(
-                "<blockquote style='margin:8px 0; padding:2px 0 2px 12px; border-left:3px solid #dcc5a7; "
-                "color:#6d5847;'>"
+                "<blockquote style='margin:8px 0; padding:2px 0 2px 12px; border-left:3px solid #a8c5b9; "
+                "color:#51635b;'>"
                 + "<br>".join(render_inline_markdown(item) for item in quote_lines)
                 + "</blockquote>"
             )
@@ -530,7 +600,7 @@ def render_markdown_html(text: str) -> str:
                 items.append(re.sub(r"^[-*]\s+", "", lines[i].strip()))
                 i += 1
             blocks.append(
-                "<ul style='margin:8px 0 8px 18px; padding:0; color:#2f241c;'>"
+                "<ul style='margin:8px 0 8px 18px; padding:0; color:#202923;'>"
                 + "".join(
                     f"<li style='margin:4px 0;'>{render_inline_markdown(item)}</li>" for item in items
                 )
@@ -544,7 +614,7 @@ def render_markdown_html(text: str) -> str:
                 items.append(re.sub(r"^\d+\.\s+", "", lines[i].strip()))
                 i += 1
             blocks.append(
-                "<ol style='margin:8px 0 8px 20px; padding:0; color:#2f241c;'>"
+                "<ol style='margin:8px 0 8px 20px; padding:0; color:#202923;'>"
                 + "".join(
                     f"<li style='margin:4px 0;'>{render_inline_markdown(item)}</li>" for item in items
                 )
@@ -569,13 +639,13 @@ def render_markdown_html(text: str) -> str:
             i += 1
 
         blocks.append(
-            "<p style='margin:8px 0; color:#2f241c; line-height:1.65;'>"
+            "<p style='margin:8px 0; color:#202923; line-height:1.65;'>"
             + "<br>".join(render_inline_markdown(item) for item in paragraph_lines)
             + "</p>"
         )
 
     if not blocks:
-        return "<p style='margin:0; color:#2f241c; line-height:1.65;'></p>"
+        return "<p style='margin:0; color:#202923; line-height:1.65;'></p>"
     return "".join(blocks)
 
 
@@ -978,6 +1048,10 @@ def session_work_dir_overrides_path() -> Path:
     return ui_state_dir() / "session_work_dirs.json"
 
 
+def session_model_overrides_path() -> Path:
+    return ui_state_dir() / "session_models.json"
+
+
 def extract_session_id_from_rollout(path: str) -> str | None:
     match = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", path)
     return match.group(1) if match else None
@@ -997,12 +1071,14 @@ def build_session_summary(
     thread_name: str,
     updated_at_raw: str,
     aliases: dict[str, str] | None = None,
+    cwd: str = "",
 ) -> SessionSummary:
     return SessionSummary(
         session_id=session_id,
         thread_name=apply_session_alias(session_id, thread_name, aliases),
         updated_at=to_local_time(updated_at_raw, "%m-%d %H:%M"),
         updated_at_raw=updated_at_raw,
+        cwd=cwd,
     )
 
 
@@ -1011,6 +1087,7 @@ def build_session_candidate(
     thread_name: str,
     updated_at_raw: str,
     title_priority: int,
+    cwd: str = "",
 ) -> SessionCandidate:
     cleaned_title = sanitize_session_title(thread_name)
     return SessionCandidate(
@@ -1018,6 +1095,7 @@ def build_session_candidate(
         thread_name=cleaned_title or session_id[:8],
         updated_at_raw=updated_at_raw,
         title_priority=title_priority if cleaned_title else 0,
+        cwd=cwd,
     )
 
 
@@ -1060,6 +1138,12 @@ def merge_session_candidate(current: SessionCandidate | None, incoming: SessionC
     incoming_title = incoming.thread_name.strip()
     title = current_title
     priority = current.title_priority
+    cwd = current.cwd
+    if incoming.cwd and (
+        not cwd
+        or session_sort_key(incoming.updated_at_raw) >= session_sort_key(current.updated_at_raw)
+    ):
+        cwd = incoming.cwd
 
     if incoming.title_priority > current.title_priority and incoming_title:
         title = incoming_title
@@ -1077,7 +1161,237 @@ def merge_session_candidate(current: SessionCandidate | None, incoming: SessionC
         thread_name=title or current.session_id[:8],
         updated_at_raw=latest_raw,
         title_priority=priority,
+        cwd=cwd,
     )
+
+
+def project_root_for_cwd(cwd: str | Path | None) -> str:
+    raw = str(cwd or "").strip()
+    if not raw:
+        return ""
+    cached = _PROJECT_ROOT_CACHE.get(raw)
+    if cached is not None:
+        return cached
+
+    try:
+        path = Path(raw).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        path = Path(raw).expanduser().absolute()
+
+    # Session cwd is a directory even when that directory is temporarily unavailable.
+    current = path
+    for candidate in (current, *current.parents):
+        try:
+            if (candidate / ".git").exists():
+                result = str(candidate)
+                _PROJECT_ROOT_CACHE[raw] = result
+                return result
+        except OSError:
+            continue
+
+    result = str(current)
+    _PROJECT_ROOT_CACHE[raw] = result
+    return result
+
+
+def project_display_name(project_root: str | Path | None) -> str:
+    root = str(project_root or "").strip()
+    if not root:
+        return "未指定目录"
+    path = Path(root)
+    if path == Path.home():
+        return "主目录"
+    return path.name or str(path)
+
+
+def load_codex_projects(codex_home: Path) -> list[CodexProject]:
+    state_path = codex_home / ".codex-global-state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(state, dict):
+        return []
+
+    raw_projects = state.get("local-projects", {})
+    if not isinstance(raw_projects, dict):
+        return []
+    raw_order = state.get("project-order", [])
+    project_order = [str(item) for item in raw_order] if isinstance(raw_order, list) else []
+    project_order.extend(str(key) for key in raw_projects if str(key) not in project_order)
+
+    assignments = state.get("thread-project-assignments", {})
+    if not isinstance(assignments, dict):
+        assignments = {}
+    thread_orders = state.get("sidebar-project-thread-orders", {})
+    if not isinstance(thread_orders, dict):
+        thread_orders = {}
+    atom_state = state.get("electron-persisted-atom-state", {})
+    if not isinstance(atom_state, dict):
+        atom_state = {}
+    selected_project = state.get("selected-project", {})
+    selected_project_id = (
+        str(selected_project.get("projectId") or "")
+        if isinstance(selected_project, dict) and selected_project.get("type") == "local"
+        else ""
+    )
+
+    assigned_by_project: dict[str, list[str]] = {}
+    for session_id, assignment in assignments.items():
+        if not isinstance(assignment, dict) or assignment.get("projectKind") != "local":
+            continue
+        project_id = str(assignment.get("projectId") or "").strip()
+        if project_id:
+            assigned_by_project.setdefault(project_id, []).append(str(session_id))
+
+    projects: list[CodexProject] = []
+    for project_id in project_order:
+        raw = raw_projects.get(project_id)
+        if not isinstance(raw, dict):
+            continue
+        roots = raw.get("rootPaths", [])
+        root_paths = [str(path).strip() for path in roots if str(path).strip()] if isinstance(roots, list) else []
+        order_entry = thread_orders.get(project_id, {})
+        ordered_ids = order_entry.get("threadIds", []) if isinstance(order_entry, dict) else []
+        session_ids = [str(item) for item in ordered_ids] if isinstance(ordered_ids, list) else []
+        session_ids.extend(
+            session_id
+            for session_id in assigned_by_project.get(project_id, [])
+            if session_id not in session_ids
+        )
+        projects.append(
+            CodexProject(
+                project_id=project_id,
+                name=str(raw.get("name") or "").strip() or project_display_name(root_paths[0] if root_paths else ""),
+                root_paths=root_paths,
+                session_ids=session_ids,
+                expanded=bool(atom_state.get(f"sidebar-project-expanded-v1-codex:{project_id}", False)),
+                selected=project_id == selected_project_id,
+            )
+        )
+    return projects
+
+
+def update_codex_global_state(codex_home: Path, mutator) -> None:
+    state_path = codex_home / ".codex-global-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = state_path.with_name(f"{state_path.name}.codex-ui.lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                state = {}
+            if not isinstance(state, dict):
+                raise ValueError("Codex 全局状态文件格式无效")
+            mutator(state)
+            temporary = state_path.with_name(f"{state_path.name}.tmp-{os.getpid()}")
+            temporary.write_text(
+                json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            os.replace(temporary, state_path)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def create_codex_local_project(codex_home: Path, name: str, root_path: Path) -> str:
+    project_name = name.strip()
+    if not project_name:
+        raise ValueError("项目名称不能为空")
+    root = str(root_path.expanduser().resolve())
+    selected_id = ""
+
+    def mutate(state: dict) -> None:
+        nonlocal selected_id
+        projects = state.setdefault("local-projects", {})
+        if not isinstance(projects, dict):
+            raise ValueError("Codex 项目数据格式无效")
+        for project_id, raw in projects.items():
+            if not isinstance(raw, dict):
+                continue
+            roots = raw.get("rootPaths", [])
+            normalized_roots = {
+                str(Path(str(item)).expanduser().resolve(strict=False))
+                for item in roots
+                if str(item).strip()
+            } if isinstance(roots, list) else set()
+            if root in normalized_roots:
+                selected_id = str(project_id)
+                break
+
+        if not selected_id:
+            selected_id = str(uuid.uuid4())
+            now_ms = int(datetime.now().timestamp() * 1000)
+            projects[selected_id] = {
+                "id": selected_id,
+                "name": project_name,
+                "rootPaths": [root],
+                "createdAt": now_ms,
+                "updatedAt": now_ms,
+            }
+            order = state.setdefault("project-order", [])
+            if not isinstance(order, list):
+                order = []
+                state["project-order"] = order
+            order.insert(0, selected_id)
+
+        state["selected-project"] = {"type": "local", "projectId": selected_id}
+        atom_state = state.setdefault("electron-persisted-atom-state", {})
+        if not isinstance(atom_state, dict):
+            atom_state = {}
+            state["electron-persisted-atom-state"] = atom_state
+        atom_state[f"sidebar-project-expanded-v1-codex:{selected_id}"] = True
+
+    update_codex_global_state(codex_home, mutate)
+    return selected_id
+
+
+def set_codex_project_sidebar_state(
+    codex_home: Path,
+    project_id: str,
+    expanded: bool,
+) -> None:
+    def mutate(state: dict) -> None:
+        state["selected-project"] = {"type": "local", "projectId": project_id}
+        atom_state = state.setdefault("electron-persisted-atom-state", {})
+        if not isinstance(atom_state, dict):
+            atom_state = {}
+            state["electron-persisted-atom-state"] = atom_state
+        atom_state[f"sidebar-project-expanded-v1-codex:{project_id}"] = expanded
+
+    update_codex_global_state(codex_home, mutate)
+
+
+def assign_session_to_codex_project(
+    codex_home: Path,
+    session_id: str,
+    project_id: str,
+) -> None:
+    def mutate(state: dict) -> None:
+        assignments = state.setdefault("thread-project-assignments", {})
+        if not isinstance(assignments, dict):
+            assignments = {}
+            state["thread-project-assignments"] = assignments
+        assignments[session_id] = {"projectKind": "local", "projectId": project_id}
+
+        orders = state.setdefault("sidebar-project-thread-orders", {})
+        if not isinstance(orders, dict):
+            orders = {}
+            state["sidebar-project-thread-orders"] = orders
+        project_order = orders.setdefault(project_id, {"threadIds": []})
+        if not isinstance(project_order, dict):
+            project_order = {"threadIds": []}
+            orders[project_id] = project_order
+        thread_ids = project_order.setdefault("threadIds", [])
+        if not isinstance(thread_ids, list):
+            thread_ids = []
+            project_order["threadIds"] = thread_ids
+        if session_id not in thread_ids:
+            thread_ids.insert(0, session_id)
+
+    update_codex_global_state(codex_home, mutate)
 
 
 def load_account_registry(codex_home: Path) -> dict:
@@ -1181,6 +1495,101 @@ def save_session_work_dir_overrides(mappings: dict[str, str]) -> None:
     path = session_work_dir_overrides_path()
     payload = {"work_dirs": mappings, "updated_at": datetime.now().astimezone().isoformat()}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_session_model_overrides() -> dict[str, dict[str, str]]:
+    path = session_model_overrides_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    sessions = data.get("sessions", {})
+    if not isinstance(sessions, dict):
+        return {}
+    cleaned: dict[str, dict[str, str]] = {}
+    for session_id, raw in sessions.items():
+        if not isinstance(raw, dict):
+            continue
+        key = str(session_id).strip()
+        if not key:
+            continue
+        cleaned[key] = {
+            "model": str(raw.get("model") or "").strip(),
+            "reasoning_effort": normalize_reasoning_effort(raw.get("reasoning_effort")),
+        }
+    return cleaned
+
+
+def save_session_model_overrides(mappings: dict[str, dict[str, str]]) -> None:
+    path = session_model_overrides_path()
+    payload = {"sessions": mappings, "updated_at": datetime.now().astimezone().isoformat()}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+_SESSION_MODEL_CACHE: dict[str, tuple[int, int, tuple[str, str]]] = {}
+
+
+def session_model_settings_from_path(path: Path | None) -> tuple[str, str]:
+    if not path or not path.exists():
+        return "", ""
+    try:
+        stat = path.stat()
+    except OSError:
+        return "", ""
+    cache_key = str(path)
+    cached = _SESSION_MODEL_CACHE.get(cache_key)
+    if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+        return cached[2]
+
+    model = ""
+    effort = ""
+    try:
+        with path.open("rb") as stream:
+            position = stat.st_size
+            remainder = b""
+            scanned = 0
+            while position > 0 and scanned < 32 * 1024 * 1024:
+                read_size = min(256 * 1024, position)
+                position -= read_size
+                stream.seek(position)
+                block = stream.read(read_size)
+                scanned += len(block)
+                parts = (block + remainder).split(b"\n")
+                remainder = parts[0]
+                for raw_line in reversed(parts[1:]):
+                    if b'"type":"turn_context"' not in raw_line and b'"type": "turn_context"' not in raw_line:
+                        continue
+                    try:
+                        item = json.loads(raw_line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    payload = item.get("payload", {})
+                    if not isinstance(payload, dict):
+                        continue
+                    model = str(payload.get("model") or "").strip()
+                    effort = normalize_reasoning_effort(payload.get("effort"))
+                    if not effort:
+                        collaboration = payload.get("collaboration_mode", {})
+                        if isinstance(collaboration, dict):
+                            settings = collaboration.get("settings", {})
+                            if isinstance(settings, dict):
+                                effort = normalize_reasoning_effort(settings.get("reasoning_effort"))
+                    if model:
+                        break
+                if model:
+                    break
+    except OSError:
+        pass
+
+    result = (model, effort)
+    _SESSION_MODEL_CACHE[cache_key] = (stat.st_mtime_ns, stat.st_size, result)
+    return result
+
+
+def load_session_model_settings(codex_home: Path, session_id: str) -> tuple[str, str]:
+    return session_model_settings_from_path(find_session_file(codex_home, session_id))
 
 
 def session_cwd_from_path(path: Path | None) -> str:
@@ -1361,6 +1770,7 @@ def scan_session_file_candidate(path: Path) -> SessionCandidate | None:
     response_user_message = ""
     latest_seen: datetime | None = None
     latest_raw = ""
+    session_cwd = ""
 
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -1380,6 +1790,11 @@ def scan_session_file_candidate(path: Path) -> SessionCandidate | None:
 
                 if item_type == "session_meta" and isinstance(payload, dict):
                     session_id = session_id or payload.get("id")
+                    session_cwd = str(payload.get("cwd") or session_cwd).strip()
+                    continue
+
+                if item_type == "turn_context" and isinstance(payload, dict):
+                    session_cwd = str(payload.get("cwd") or session_cwd).strip()
                     continue
 
                 if item_type == "event_msg" and isinstance(payload, dict):
@@ -1420,6 +1835,7 @@ def scan_session_file_candidate(path: Path) -> SessionCandidate | None:
         thread_name=final_title,
         updated_at_raw=latest_raw,
         title_priority=title_priority,
+        cwd=session_cwd,
     )
 
 
@@ -1485,7 +1901,7 @@ def load_config() -> AppConfig:
         codex_path=default["codex_path"],
         codex_home=Path(default["codex_home"]).expanduser(),
         work_dir=Path(default["work_dir"]).expanduser(),
-        model=default["model"],
+        model="" if is_retired_model(default["model"]) else default["model"],
         model_reasoning_effort=normalize_reasoning_effort(default.get("model_reasoning_effort")),
         full_auto=default["full_auto"],
         approval_policy=normalize_approval_policy(default.get("approval_policy")),
@@ -1505,7 +1921,13 @@ def load_sessions(
 ) -> list[SessionSummary]:
     candidates = load_merged_session_candidates(config.codex_home, force_refresh=force_refresh)
     sessions = [
-        build_session_summary(item.session_id, item.thread_name, item.updated_at_raw, session_aliases)
+        build_session_summary(
+            item.session_id,
+            item.thread_name,
+            item.updated_at_raw,
+            session_aliases,
+            item.cwd,
+        )
         for item in candidates.values()
     ]
     sessions.sort(key=lambda x: session_sort_key(x.updated_at_raw), reverse=True)
@@ -1523,15 +1945,26 @@ def load_session_summary(
     candidate = load_merged_session_candidates(config.codex_home, force_refresh=force_refresh).get(session_id)
     if not candidate:
         return None
-    return build_session_summary(candidate.session_id, candidate.thread_name, candidate.updated_at_raw, session_aliases)
+    return build_session_summary(
+        candidate.session_id,
+        candidate.thread_name,
+        candidate.updated_at_raw,
+        session_aliases,
+        candidate.cwd,
+    )
 
 
 def find_session_file(codex_home: Path, session_id: str) -> Path | None:
+    cache_key = (str(codex_home.resolve()), session_id)
+    cached = _SESSION_FILE_PATH_CACHE.get(cache_key)
+    if cached is not None and cached.exists():
+        return cached
     root = codex_home / "sessions"
     if not root.exists():
         return None
     for path in root.rglob("*.jsonl"):
         if session_id in path.name:
+            _SESSION_FILE_PATH_CACHE[cache_key] = path
             return path
     return None
 
