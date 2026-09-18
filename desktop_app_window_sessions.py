@@ -68,6 +68,8 @@ class WindowSessionMixin:
                 return override or session.cwd or str(self.config.work_dir)
 
     def session_project(self, session: SessionSummary) -> CodexProject | None:
+                if session.session_id in self.session_project_exclusions:
+                    return None
                 explicit_id = self.session_project_ids.get(session.session_id)
                 if explicit_id:
                     return self.project_by_id.get(explicit_id)
@@ -141,6 +143,93 @@ class WindowSessionMixin:
                 self.session_scope = "all"
                 self.apply_session_filters()
                 self.set_status("项目已创建", "idle")
+
+    def new_session_in_project(self, project_id: str) -> None:
+                project = self.project_by_id.get(project_id)
+                if project is None:
+                    self.set_status("项目不存在或已被删除", "error")
+                    return
+                self.selected_project_context_id = project_id
+                self.collapsed_project_ids.discard(project_id)
+                for item_project in self.projects:
+                    item_project.selected = item_project.project_id == project_id
+                self.new_session()
+
+    def refresh_session_project_actions(self) -> None:
+                self.move_session_menu.clear()
+                has_session = bool(self.active_session_id)
+                summary = next(
+                    (item for item in self.sessions if item.session_id == self.active_session_id),
+                    None,
+                )
+                current_project = self.session_project(summary) if summary else None
+                if not self.projects:
+                    action = self.move_session_menu.addAction("暂无项目")
+                    action.setEnabled(False)
+                for project in self.projects:
+                    is_current = bool(
+                        current_project and project.project_id == current_project.project_id
+                    )
+                    label = project.name
+                    if is_current:
+                        label += "（当前）"
+                    action = self.move_session_menu.addAction(label)
+                    action.setEnabled(has_session and not is_current)
+                    action.triggered.connect(
+                        lambda _checked=False, target_id=project.project_id: (
+                            self.move_current_session_to_project(target_id)
+                        )
+                    )
+                self.move_session_menu.setEnabled(has_session and bool(self.projects))
+                self.remove_session_project_action.setEnabled(bool(has_session and current_project))
+
+    def move_current_session_to_project(self, project_id: str) -> None:
+                if not self.active_session_id or project_id not in self.project_by_id:
+                    return
+                try:
+                    assign_session_to_codex_project(
+                        self.config.codex_home,
+                        self.active_session_id,
+                        project_id,
+                    )
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    QMessageBox.critical(self, "Codex for Linux", f"移动会话失败：{exc}")
+                    return
+                self.session_project_exclusions.discard(self.active_session_id)
+                save_session_project_exclusions(self.session_project_exclusions)
+                self.refresh_project_catalog()
+                self.selected_project_context_id = project_id
+                self.collapsed_project_ids.discard(project_id)
+                for project in self.projects:
+                    project.selected = project.project_id == project_id
+                self.apply_session_filters()
+                self.set_status("会话已移动到项目", "idle")
+
+    def remove_current_session_from_project(self) -> None:
+                if not self.active_session_id:
+                    return
+                summary = next(
+                    (item for item in self.sessions if item.session_id == self.active_session_id),
+                    None,
+                )
+                if summary is None or self.session_project(summary) is None:
+                    return
+                try:
+                    remove_session_from_codex_project(
+                        self.config.codex_home,
+                        self.active_session_id,
+                    )
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    QMessageBox.critical(self, "Codex for Linux", f"移除会话失败：{exc}")
+                    return
+                self.session_project_exclusions.add(self.active_session_id)
+                save_session_project_exclusions(self.session_project_exclusions)
+                self.refresh_project_catalog()
+                self.selected_project_context_id = ""
+                for project in self.projects:
+                    project.selected = False
+                self.apply_session_filters()
+                self.set_status("会话已从项目移除", "idle")
 
     def is_session_running(self, session_id: str | None) -> bool:
                 if not session_id:
@@ -258,7 +347,7 @@ class WindowSessionMixin:
                     if selected:
                         current_row = self.session_list.row(item)
 
-                if show_draft:
+                if show_draft and not self.new_session_project_id:
                     add_session_item(self.draft_session_summary(), selected=True)
 
                 pinned_sessions = [s for s in filtered_sessions if s.session_id in self.pinned_session_ids]
@@ -351,16 +440,24 @@ class WindowSessionMixin:
                         header_item.setData(Qt.UserRole, f"__project__:{project.project_id}")
                         tooltip = "\n".join(project.root_paths)
                         header_widget = ProjectGroupHeader(
+                            project.project_id,
                             project.name,
                             tooltip,
                             collapsed,
                             project.selected,
                         )
+                        header_widget.new_session_requested.connect(self.new_session_in_project)
                         header_item.setSizeHint(header_widget.sizeHint())
                         header_item.setToolTip(tooltip)
                         self.session_list.addItem(header_item)
                         self.session_list.setItemWidget(header_item, header_widget)
                         if not collapsed:
+                            if show_draft and self.new_session_project_id == project.project_id:
+                                add_session_item(
+                                    self.draft_session_summary(),
+                                    selected=True,
+                                    compact=True,
+                                )
                             for session in ordered_sessions:
                                 add_session_item(
                                     session,
@@ -448,6 +545,11 @@ class WindowSessionMixin:
 
     def update_session_action_buttons(self) -> None:
                 has_session = bool(self.active_session_id)
+                summary = next(
+                    (item for item in self.sessions if item.session_id == self.active_session_id),
+                    None,
+                )
+                current_project = self.session_project(summary) if summary else None
                 self.session_more_button.setEnabled(True)
                 self.rename_session_action.setEnabled(has_session)
                 self.copy_session_id_action.setEnabled(has_session)
@@ -457,6 +559,8 @@ class WindowSessionMixin:
                     and bool(find_session_file(self.config.codex_home, self.active_session_id))
                 )
                 self.edit_work_dir_action.setEnabled(True)
+                self.move_session_menu.setEnabled(has_session and bool(self.projects))
+                self.remove_session_project_action.setEnabled(bool(has_session and current_project))
                 self.clear_session_alias_action.setEnabled(
                     has_session and self.active_session_id in self.session_aliases
                 )

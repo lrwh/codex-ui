@@ -55,7 +55,7 @@ from desktop_app_ui import *
 
 class WindowConversationMixin:
     def append_attachments(self, paths: list[str]) -> tuple[int, list[str]]:
-                unsupported: list[str] = []
+                invalid_paths: list[str] = []
                 added = 0
                 existing = {item.path for item in self.pending_attachments}
                 for raw_path in paths:
@@ -63,18 +63,15 @@ class WindowConversationMixin:
                     if not path or path in existing:
                         continue
                     if not Path(path).is_file():
-                        unsupported.append(Path(path).name or path)
+                        invalid_paths.append(Path(path).name or path)
                         continue
                     kind = detect_attachment_kind(path)
-                    if kind is None:
-                        unsupported.append(Path(path).name)
-                        continue
                     self.pending_attachments.append(AttachmentInfo(path=path, kind=kind))
                     existing.add(path)
                     added += 1
                 if added:
                     self.refresh_attachment_widgets()
-                return added, unsupported
+                return added, invalid_paths
 
     def refresh_attachment_widgets(self) -> None:
                 self.clear_layout_widgets(self.attachment_list_layout)
@@ -84,7 +81,7 @@ class WindowConversationMixin:
                     return
                 self.attachment_hint.hide()
                 for index, item in enumerate(self.pending_attachments):
-                    kind = "图" if item.kind == "image" else "文"
+                    kind = {"image": "图", "text": "文"}.get(item.kind, "件")
                     button = QPushButton(f"{kind} {truncate_text(attachment_label(item.path), 24)} ×")
                     button.setObjectName("scopeButton")
                     button.clicked.connect(lambda _checked=False, i=index: self.remove_attachment(i))
@@ -102,32 +99,31 @@ class WindowConversationMixin:
                     self,
                     "选择附件",
                     str(self.config.work_dir),
-                    "支持的附件 (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.log *.md *.markdown);;"
+                    "所有文件 (*);;"
                     "图片 (*.png *.jpg *.jpeg *.webp *.gif *.bmp);;"
-                    "日志 (*.log);;"
-                    "Markdown (*.md *.markdown)",
+                    "文本文件 (*.txt *.log *.md *.markdown *.json *.jsonl *.yaml *.yml *.toml *.csv *.xml)",
                 )
                 if not files:
                     return
-                added, unsupported = self.append_attachments(files)
+                added, invalid_paths = self.append_attachments(files)
                 if added:
                     self.set_status(f"已添加 {added} 个附件", "idle")
-                if unsupported:
+                if invalid_paths:
                     QMessageBox.information(
                         self,
                         "codex-ui",
-                        "以下附件类型暂不支持：\n" + "\n".join(unsupported),
+                        "以下路径不存在或不是文件：\n" + "\n".join(invalid_paths),
                     )
 
     def add_pasted_attachments(self, paths: list[str]) -> None:
-                added, unsupported = self.append_attachments(paths)
+                added, invalid_paths = self.append_attachments(paths)
                 if added:
                     self.set_status(f"已从剪贴板添加 {added} 个附件", "idle")
-                if unsupported:
+                if invalid_paths:
                     QMessageBox.information(
                         self,
                         "codex-ui",
-                        "以下粘贴内容暂不支持作为附件：\n" + "\n".join(unsupported),
+                        "以下粘贴路径不存在或不是文件：\n" + "\n".join(invalid_paths),
                     )
 
     def add_clipboard_image_attachment(self, image) -> None:
@@ -135,16 +131,16 @@ class WindowConversationMixin:
                 if not image.save(str(target), "PNG"):
                     QMessageBox.critical(self, "codex-ui", "剪贴板图片保存失败，无法作为附件添加。")
                     return
-                added, unsupported = self.append_attachments([str(target)])
+                added, invalid_paths = self.append_attachments([str(target)])
                 if added:
                     self.set_status("已从剪贴板添加图片附件", "idle")
                     return
                 target.unlink(missing_ok=True)
-                if unsupported:
+                if invalid_paths:
                     QMessageBox.information(
                         self,
                         "codex-ui",
-                        "当前剪贴板图片无法作为支持的附件添加。",
+                        "当前剪贴板图片无法添加。",
                     )
 
     def current_request_key(self) -> str:

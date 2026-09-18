@@ -80,6 +80,7 @@ class MainWindow(
                 self.session_aliases = load_session_aliases()
                 self.session_work_dir_overrides = load_session_work_dir_overrides()
                 self.session_model_overrides = load_session_model_overrides()
+                self.session_project_exclusions = load_session_project_exclusions()
                 self.projects = load_codex_projects(self.config.codex_home)
                 self.project_by_id = {project.project_id: project for project in self.projects}
                 self.session_project_ids = {

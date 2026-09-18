@@ -572,8 +572,18 @@ class SessionGroupHeader(QFrame):
 
 
 class ProjectGroupHeader(QFrame):
-    def __init__(self, title: str, project_root: str, collapsed: bool, selected: bool) -> None:
+    new_session_requested = Signal(str)
+
+    def __init__(
+        self,
+        project_id: str,
+        title: str,
+        project_root: str,
+        collapsed: bool,
+        selected: bool,
+    ) -> None:
         super().__init__()
+        self.project_id = project_id
         self.setObjectName("projectGroupHeader")
         self.setProperty("selected", selected)
         self.setToolTip(project_root)
@@ -585,11 +595,17 @@ class ProjectGroupHeader(QFrame):
         folder.setPixmap(self.style().standardIcon(QStyle.SP_DirIcon).pixmap(14, 14))
         caret = QLabel("›" if collapsed else "⌄")
         caret.setObjectName("projectCaret")
-        label = QLabel(truncate_text(title, 21))
+        label = QLabel(truncate_text(title, 18))
         label.setObjectName("projectGroupTitle")
+        add_button = QPushButton("+")
+        add_button.setObjectName("projectAddButton")
+        add_button.setFixedSize(20, 20)
+        add_button.setToolTip(f"在 {title} 中新建会话")
+        add_button.clicked.connect(lambda: self.new_session_requested.emit(self.project_id))
 
         layout.addWidget(folder, 0)
         layout.addWidget(label, 1)
+        layout.addWidget(add_button, 0)
         layout.addWidget(caret, 0)
 
     def set_selected(self, selected: bool) -> None:
