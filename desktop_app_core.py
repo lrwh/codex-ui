@@ -262,7 +262,12 @@ def humanize_count(value: object) -> str:
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-TEXT_ATTACHMENT_SUFFIXES = {".log", ".md", ".markdown"}
+TEXT_ATTACHMENT_SUFFIXES = {
+    ".txt", ".log", ".md", ".markdown", ".json", ".jsonl", ".yaml", ".yml",
+    ".toml", ".ini", ".cfg", ".conf", ".csv", ".tsv", ".xml", ".html", ".htm",
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".h",
+    ".cpp", ".hpp", ".sh", ".sql", ".dql",
+}
 TEXT_ATTACHMENT_CHAR_LIMIT = 50000
 APP_ICON_NAME = "codex-ui.svg"
 APP_VERSION_FILE = "VERSION"
@@ -335,13 +340,13 @@ def load_app_icon() -> QIcon | None:
     return QIcon(str(icon_path))
 
 
-def detect_attachment_kind(path: str) -> str | None:
+def detect_attachment_kind(path: str) -> str:
     suffix = Path(path).suffix.lower()
     if suffix in IMAGE_SUFFIXES:
         return "image"
     if suffix in TEXT_ATTACHMENT_SUFFIXES:
         return "text"
-    return None
+    return "file"
 
 
 def attachment_label(path: str) -> str:
@@ -359,7 +364,7 @@ def render_attachment_summary(attachments: list[AttachmentInfo]) -> str:
         return ""
     lines = ["附件:"]
     for item in attachments:
-        kind = "图片" if item.kind == "image" else "文本"
+        kind = {"image": "图片", "text": "文本"}.get(item.kind, "文件")
         lines.append(f"- {attachment_label(item.path)} ({kind})")
     return "\n".join(lines)
 
@@ -395,6 +400,12 @@ def build_prompt_with_attachments(prompt: str, attachments: list[AttachmentInfo]
         for item in image_attachments:
             image_lines.append(f"- {attachment_label(item.path)}")
         parts.append("\n".join(image_lines))
+    file_attachments = [item for item in attachments if item.kind == "file"]
+    if file_attachments:
+        file_lines = ["已附带本地文件，请使用本地工具读取并结合文件内容处理当前请求："]
+        for item in file_attachments:
+            file_lines.append(f"- {attachment_label(item.path)}: {item.path}")
+        parts.append("\n".join(file_lines))
     return "\n\n".join(part for part in parts if part.strip()).strip()
 
 
@@ -1052,6 +1063,10 @@ def session_model_overrides_path() -> Path:
     return ui_state_dir() / "session_models.json"
 
 
+def session_project_exclusions_path() -> Path:
+    return ui_state_dir() / "session_project_exclusions.json"
+
+
 def extract_session_id_from_rollout(path: str) -> str | None:
     match = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", path)
     return match.group(1) if match else None
@@ -1380,6 +1395,12 @@ def assign_session_to_codex_project(
         if not isinstance(orders, dict):
             orders = {}
             state["sidebar-project-thread-orders"] = orders
+        for order_entry in orders.values():
+            if not isinstance(order_entry, dict):
+                continue
+            existing_ids = order_entry.get("threadIds")
+            if isinstance(existing_ids, list):
+                order_entry["threadIds"] = [item for item in existing_ids if item != session_id]
         project_order = orders.setdefault(project_id, {"threadIds": []})
         if not isinstance(project_order, dict):
             project_order = {"threadIds": []}
@@ -1390,6 +1411,24 @@ def assign_session_to_codex_project(
             project_order["threadIds"] = thread_ids
         if session_id not in thread_ids:
             thread_ids.insert(0, session_id)
+
+    update_codex_global_state(codex_home, mutate)
+
+
+def remove_session_from_codex_project(codex_home: Path, session_id: str) -> None:
+    def mutate(state: dict) -> None:
+        assignments = state.get("thread-project-assignments")
+        if isinstance(assignments, dict):
+            assignments.pop(session_id, None)
+        orders = state.get("sidebar-project-thread-orders")
+        if not isinstance(orders, dict):
+            return
+        for order_entry in orders.values():
+            if not isinstance(order_entry, dict):
+                continue
+            thread_ids = order_entry.get("threadIds")
+            if isinstance(thread_ids, list):
+                order_entry["threadIds"] = [item for item in thread_ids if item != session_id]
 
     update_codex_global_state(codex_home, mutate)
 
@@ -1525,6 +1564,29 @@ def load_session_model_overrides() -> dict[str, dict[str, str]]:
 def save_session_model_overrides(mappings: dict[str, dict[str, str]]) -> None:
     path = session_model_overrides_path()
     payload = {"sessions": mappings, "updated_at": datetime.now().astimezone().isoformat()}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_session_project_exclusions() -> set[str]:
+    path = session_project_exclusions_path()
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    session_ids = payload.get("session_ids", []) if isinstance(payload, dict) else []
+    if not isinstance(session_ids, list):
+        return set()
+    return {str(item) for item in session_ids if str(item).strip()}
+
+
+def save_session_project_exclusions(session_ids: set[str]) -> None:
+    path = session_project_exclusions_path()
+    payload = {
+        "session_ids": sorted(session_ids),
+        "updated_at": datetime.now().astimezone().isoformat(),
+    }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

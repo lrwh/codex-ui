@@ -205,7 +205,13 @@ class WindowLayoutMixin:
                 self.copy_resume_action = self.session_more_menu.addAction("复制恢复命令", self.copy_resume_command)
                 self.open_session_file_action = self.session_more_menu.addAction("打开会话文件", self.open_current_session_file)
                 self.edit_work_dir_action = self.session_more_menu.addAction("修改工作目录", self.edit_current_work_dir)
+                self.move_session_menu = self.session_more_menu.addMenu("移动到项目")
+                self.remove_session_project_action = self.session_more_menu.addAction(
+                    "从项目移除",
+                    self.remove_current_session_from_project,
+                )
                 self.clear_session_alias_action = self.session_more_menu.addAction("清除本地别名", self.clear_current_session_alias)
+                self.session_more_menu.aboutToShow.connect(self.refresh_session_project_actions)
                 self.session_more_button.setMenu(self.session_more_menu)
                 header_row = QHBoxLayout()
                 header_row.setContentsMargins(0, 0, 0, 0)
@@ -685,6 +691,18 @@ class WindowLayoutMixin:
                       color: #344139;
                       font-size: 12px;
                       font-weight: 700;
+                    }
+                    QPushButton#projectAddButton {
+                      background: transparent;
+                      color: #2f7b68;
+                      border: none;
+                      border-radius: 8px;
+                      font-size: 15px;
+                      font-weight: 700;
+                      padding: 0;
+                    }
+                    QPushButton#projectAddButton:hover {
+                      background: #dfece6;
                     }
                     QLabel#sessionGroupTitle {
                       color: #8a7561;
